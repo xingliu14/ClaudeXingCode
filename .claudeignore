@@ -1,0 +1,23 @@
+# Secrets and credentials
+.env
+agent/.env
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+
+# Build artifacts
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+agent/digest.log
+
+# OS noise
+.DS_Store

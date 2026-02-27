@@ -1,0 +1,35 @@
+services:
+  agent:
+    build: .
+    image: claude-agent:latest
+    container_name: claude-agent
+
+    volumes:
+      # Project the agent will work on — set WORKSPACE_PATH before running
+      # Example: WORKSPACE_PATH=/Users/you/my-project docker compose up
+      - ${WORKSPACE_PATH:-/tmp/workspace}:/workspace
+
+      # Claude Code auth token (read-only so agent can't modify it)
+      - ~/.claude:/root/.claude:ro
+
+      # Shared tasks.json — lives in this repo, mounted into the container
+      - ../tasks.json:/agent/tasks.json
+
+      # Agent writes progress back to the host
+      - ../PROGRESS.md:/agent/PROGRESS.md
+
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - WORKSPACE=/workspace
+      - DAILY_TASK_LIMIT=${DAILY_TASK_LIMIT:-20}
+      - PLAN_APPROVAL_TIMEOUT_HOURS=${PLAN_APPROVAL_TIMEOUT_HOURS:-24}
+
+    ports:
+      # Web UI — access from iPhone via Tailscale
+      - "5001:5001"
+
+    restart: unless-stopped
+
+    # Keep container alive even when dispatcher is idle
+    stdin_open: true
+    tty: true
