@@ -118,12 +118,38 @@ CLAUDE.md instructs CC:
 
 ### Phase 5: Web UI ✅ DONE (code written, not yet tested from browser)
 
-10. ✅ **`agent/web_manager.py`** — minimal Flask app (plain HTML, no JS framework):
-    - `GET /` — Kanban board: Pending / In Progress / Awaiting Approval / Decomposed / Done / Failed
+10. ✅ **`agent/web_manager.py`** — full-featured Flask app (plain HTML, no JS framework):
+
+    **Board & Navigation:**
+    - `GET /` — Kanban board: Pending / In Progress / Awaiting Approval / Push Review / Decomposed / Done / Failed
+    - Nav bar on every page: Board | Progress | Git Log | Dispatcher status dot
+    - Column counts shown in headers
+
+    **Task CRUD:**
     - `POST /tasks` — add task with priority selector
-    - `GET /tasks/<id>` — detail: plan output, result summary, subtasks list
-    - `POST /tasks/<id>/approve` — sets status → `approved`
-    - `POST /tasks/<id>/reject` — sets status → `rejected` with optional feedback
+    - `POST /tasks/<id>/edit` — edit prompt and priority (available for pending/failed/rejected)
+    - `POST /tasks/<id>/delete` — delete task (with confirmation; blocked for in_progress)
+
+    **Task Lifecycle:**
+    - `POST /tasks/<id>/approve` — approve plan → dispatcher executes
+    - `POST /tasks/<id>/reject` — reject plan with optional feedback
+    - `POST /tasks/<id>/cancel` — cancel in-progress/plan_review/approved → failed
+    - `POST /tasks/<id>/retry` — requeue failed/rejected/done → pending (clears plan + summary)
+
+    **Push Review (Phase 7):**
+    - `POST /tasks/<id>/approve-push` — approve push → dispatcher runs `git push`
+    - `POST /tasks/<id>/reject-push` — skip push → done (local commit only)
+
+    **Task Detail Page:**
+    - `GET /tasks/<id>` — full detail: status, timestamps, plan, result summary, subtasks
+    - Sessions table (Phase 8): shows each CC invocation with start time, duration, exit code, rate-limit flag
+    - Rate-limit banner when task was rate-limited
+    - Context-sensitive action buttons (only shows relevant actions per status)
+
+    **Observability Pages:**
+    - `GET /progress` — renders PROGRESS.md contents
+    - `GET /log` — shows last 30 git commits (`git log --oneline --graph --decorate`)
+    - `GET /status` — JSON endpoint for dispatcher state (reads `dispatcher_status.json`)
 
 ### Phase 6: Daily Email Digest ✅ DONE (code written, not yet tested)
 
@@ -239,8 +265,97 @@ your-project/
 6. Add `gh` CLI to Dockerfile + `GH_TOKEN` env var → verify `gh auth status` in container
 7. Add push approval flow to dispatcher + Web UI push approve/reject
 8. Update `CLAUDE.md` push rules → test repo creation + push approval end-to-end
-9. *(Later)* Tailscale + iPhone access
+9. Add rate-limit detection + 2h retry + session duration tracking to dispatcher → verify with Web UI
+10. *(Later)* Tailscale + iPhone access
 10. ✅ `CLAUDE.md` written
+
+---
+
+### Phase 8: Rate-Limit Retry & Session Duration Tracking
+
+**Goal:** When Claude Code stops due to hitting the API rate limit, automatically retry after 2 hours. Record how long each CC session lasts for observability.
+
+#### 8a. Detect rate-limit exit in dispatcher (`agent/dispatcher.py`)
+
+After the `claude` subprocess exits, inspect the output/exit code for rate-limit signals:
+- Parse stream-JSON output for `type: "error"` messages containing `"rate_limit"` or `"overloaded"`
+- Also check if the process exits non-zero with no meaningful result
+
+```python
+def is_rate_limited(returncode: int, stderr: str, output_lines: list[str]) -> bool:
+    """Return True if CC stopped due to a rate limit / usage cap."""
+    rate_limit_signals = ["rate_limit", "overloaded", "529", "usage limit"]
+    combined = stderr + " ".join(output_lines)
+    return any(s in combined.lower() for s in rate_limit_signals)
+```
+
+#### 8b. Retry-after-2h logic (`agent/dispatcher.py`)
+
+When a rate-limit is detected on the current task:
+1. Set task status back to `"pending"` (so it will be retried)
+2. Record `"rate_limited_at": <ISO timestamp>` on the task
+3. Dispatcher enters a **2-hour sleep** (`time.sleep(7200)`) before resuming the main loop
+4. Log a clear message: `"Rate limit hit — sleeping 2 hours, will retry at HH:MM"`
+5. After waking, pick up the pending task normally
+
+```python
+RATE_LIMIT_RETRY_SECONDS = 2 * 60 * 60  # 2 hours
+
+# In main loop after CC exits:
+if is_rate_limited(proc.returncode, stderr, output_lines):
+    task["status"] = "pending"
+    task["rate_limited_at"] = datetime.utcnow().isoformat()
+    save_tasks(tasks)
+    logger.warning(f"Rate limit hit on task {task['id']}. Sleeping {RATE_LIMIT_RETRY_SECONDS//3600}h...")
+    time.sleep(RATE_LIMIT_RETRY_SECONDS)
+    continue
+```
+
+#### 8c. Session duration tracking (`agent/dispatcher.py`)
+
+For every CC invocation, record wall-clock duration and append to task metadata:
+
+```python
+session_start = time.monotonic()
+proc = subprocess.run(...)           # CC runs here
+session_duration_s = time.monotonic() - session_start
+
+# Write to task:
+task.setdefault("sessions", []).append({
+    "started_at": session_start_iso,
+    "duration_s": round(session_duration_s),
+    "exit_code": proc.returncode,
+    "rate_limited": is_rate_limited(...),
+})
+```
+
+Fields logged per session:
+| Field | Description |
+|-------|-------------|
+| `started_at` | ISO-8601 UTC timestamp when CC launched |
+| `duration_s` | Wall-clock seconds CC ran |
+| `exit_code` | Process exit code |
+| `rate_limited` | Whether session ended due to rate limit |
+
+#### 8d. Expose session history in Web UI (`agent/web_manager.py`)
+
+On the task detail page (`GET /tasks/<id>`), show a **Sessions** table:
+
+```
+Sessions
+──────────────────────────────────────────────
+# │ Started            │ Duration │ Exit │ Limit?
+1 │ 2026-02-27 09:14   │ 47 min   │ 0    │ No
+2 │ 2026-02-27 11:14   │ 2 min    │ 1    │ Yes ⚠️
+3 │ 2026-02-27 13:14   │ 55 min   │ 0    │ No
+```
+
+#### 8e. Daily digest update (`agent/daily_digest.py`)
+
+Include rate-limit events in the email:
+- Total sessions run today
+- Sessions that hit rate limits (count + task IDs)
+- Average session duration
 
 ---
 
@@ -272,4 +387,9 @@ your-project/
 - [ ] Approve push via Web UI → `git push` succeeds
 - [ ] Reject push via Web UI → task marked `done`, no push
 - [ ] `gh repo create` works inside container (test with throwaway repo)
+- [ ] Rate-limit exit detected correctly (parse stream-JSON error output)
+- [ ] Dispatcher sleeps 2 hours and retries task after rate limit
+- [ ] Task `sessions` array populated with `started_at`, `duration_s`, `exit_code`, `rate_limited`
+- [ ] Web UI task detail shows Sessions table with duration history
+- [ ] Daily digest includes rate-limit count and average session duration
 - [ ] *(Later)* Tailscale: web UI reachable from iPhone
