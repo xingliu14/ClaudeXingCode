@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, redirect, render_template_string, request, url_for, jsonify
+from progress_logger import log_progress
 
 TASKS_FILE = Path(os.environ.get("TASKS_FILE", "/agent/tasks.json"))
 WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace"))
@@ -448,6 +449,7 @@ def add_task():
     }
     data["tasks"].append(task)
     save_tasks(data)
+    log_progress(task["id"], "created", f"priority={priority}, prompt={prompt[:80]}")
     return redirect(url_for("board"))
 
 
@@ -473,6 +475,7 @@ def edit_task(task_id: int):
             t["priority"] = priority
             break
     save_tasks(data)
+    log_progress(task_id, "edited", f"priority={priority}")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
@@ -481,6 +484,7 @@ def delete_task(task_id: int):
     data = load_tasks()
     data["tasks"] = [t for t in data["tasks"] if t["id"] != task_id or t["status"] == "in_progress"]
     save_tasks(data)
+    log_progress(task_id, "deleted")
     return redirect(url_for("board"))
 
 
@@ -492,6 +496,7 @@ def approve_task(task_id: int):
             t["status"] = "approved"
             break
     save_tasks(data)
+    log_progress(task_id, "plan approved")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
@@ -506,6 +511,7 @@ def reject_task(task_id: int):
                 t["summary"] = f"Rejected: {feedback}"
             break
     save_tasks(data)
+    log_progress(task_id, "plan rejected", feedback or "")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
@@ -518,6 +524,7 @@ def cancel_task(task_id: int):
             t["summary"] = (t.get("summary") or "") + "\nCancelled by user via Web UI."
             break
     save_tasks(data)
+    log_progress(task_id, "cancelled by user")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
@@ -532,6 +539,7 @@ def retry_task(task_id: int):
             t["plan"] = None
             break
     save_tasks(data)
+    log_progress(task_id, "requeued (retry)")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
@@ -543,6 +551,7 @@ def approve_push(task_id: int):
             t["status"] = "pushed"
             break
     save_tasks(data)
+    log_progress(task_id, "push approved")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
@@ -555,6 +564,7 @@ def reject_push(task_id: int):
             t["summary"] = (t.get("summary") or "") + "\nPush skipped by user (local commit only)."
             break
     save_tasks(data)
+    log_progress(task_id, "push skipped", "local commit only")
     return redirect(url_for("task_detail", task_id=task_id))
 
 

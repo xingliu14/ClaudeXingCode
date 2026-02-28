@@ -12,8 +12,9 @@ import time
 from datetime import datetime, date
 from pathlib import Path
 
-TASKS_FILE = Path("/agent/tasks.json")
-PROGRESS_FILE = Path("/agent/PROGRESS.md")
+from progress_logger import log_progress
+
+TASKS_FILE = Path(os.environ.get("TASKS_FILE", "/agent/tasks.json"))
 WORKSPACE = os.environ.get("WORKSPACE", "/workspace")
 DAILY_LIMIT = int(os.environ.get("DAILY_TASK_LIMIT", "20"))
 PLAN_TIMEOUT_HOURS = int(os.environ.get("PLAN_APPROVAL_TIMEOUT_HOURS", "24"))
@@ -35,13 +36,15 @@ def save_tasks(data: dict) -> None:
     TASKS_FILE.write_text(json.dumps(data, indent=2))
 
 
-def update_task(task_id: int, **kwargs) -> None:
+def update_task(task_id: int, progress_action: str = "", progress_details: str = "", **kwargs) -> None:
     data = load_tasks()
     for t in data["tasks"]:
         if t["id"] == task_id:
             t.update(kwargs)
             break
     save_tasks(data)
+    if progress_action:
+        log_progress(task_id, progress_action, progress_details)
 
 
 def pick_next_task(tasks: list) -> dict | None:
@@ -63,16 +66,49 @@ def tasks_completed_today(tasks: list) -> int:
 # Claude Code runner
 # ---------------------------------------------------------------------------
 
+def parse_stream_json(raw: str) -> str:
+    """
+    Extract human-readable text from Claude Code's stream-json output.
+    Prefers the top-level 'result' field; falls back to collecting
+    all assistant text blocks in order.
+    """
+    text_blocks = []
+    result_text = None
+
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        if obj.get("type") == "result" and obj.get("result"):
+            result_text = obj["result"]
+
+        if obj.get("type") == "assistant":
+            for block in obj.get("message", {}).get("content", []):
+                if block.get("type") == "text" and block.get("text"):
+                    text_blocks.append(block["text"])
+
+    if result_text:
+        return result_text
+    if text_blocks:
+        return "\n\n".join(text_blocks)
+    return raw  # fallback: return raw if nothing parsed
+
+
 def run_cc(prompt: str, mode: str) -> tuple[int, str]:
     """
     Run Claude Code with the given prompt.
-    mode: "plan" uses --plan flag; "execute" uses --dangerously-skip-permissions.
-    Returns (returncode, combined stdout+stderr output).
+    mode: "plan" uses --permission-mode plan; "execute" uses --dangerously-skip-permissions.
+    Returns (returncode, human-readable output text).
     """
     base_cmd = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose"]
 
     if mode == "plan":
-        cmd = base_cmd + ["--plan"]
+        cmd = base_cmd + ["--permission-mode", "plan"]
     else:
         cmd = base_cmd + ["--dangerously-skip-permissions"]
 
@@ -84,8 +120,8 @@ def run_cc(prompt: str, mode: str) -> tuple[int, str]:
         text=True,
         timeout=3600,  # 1 hour max per task
     )
-    output = result.stdout + result.stderr
-    return result.returncode, output
+    raw = result.stdout + result.stderr
+    return result.returncode, parse_stream_json(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +150,8 @@ def wait_for_approval(task: dict) -> bool:
         time.sleep(10)
 
     # Timed out — auto-reject
-    update_task(task_id, status="failed", summary="Plan approval timed out")
+    update_task(task_id, status="failed", summary="Plan approval timed out",
+                progress_action="failed", progress_details="plan approval timed out")
     return False
 
 
@@ -136,10 +173,8 @@ def git_commit(message: str) -> None:
 
 
 def append_progress(task_id: int, summary: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    entry = f"\n## Task #{task_id} — {ts}\n\n{summary}\n\n---\n"
-    with PROGRESS_FILE.open("a") as f:
-        f.write(entry)
+    """Legacy wrapper — writes a larger block for task completion."""
+    log_progress(task_id, "completed", summary[:200] if summary else "")
 
 
 def detect_decomposition(task_id: int) -> bool:
@@ -174,37 +209,46 @@ def main() -> None:
         print(f"[dispatcher] Starting task #{task_id}: {task['prompt'][:80]}", flush=True)
 
         # --- Phase A: Plan ---
-        update_task(task_id, status="in_progress")
+        update_task(task_id, status="in_progress",
+                    progress_action="started planning",
+                    progress_details=task["prompt"][:80])
         try:
             _, plan_output = run_cc(task["prompt"], mode="plan")
         except subprocess.TimeoutExpired:
-            update_task(task_id, status="failed", summary="Plan step timed out")
+            update_task(task_id, status="failed", summary="Plan step timed out",
+                        progress_action="failed", progress_details="plan step timed out")
             continue
 
-        update_task(task_id, status="plan_review", plan=plan_output)
+        update_task(task_id, status="plan_review", plan=plan_output,
+                    progress_action="plan ready for review")
 
         approved = wait_for_approval(task)
         if not approved:
-            update_task(task_id, status="failed", summary="Plan rejected or timed out")
+            update_task(task_id, status="failed", summary="Plan rejected or timed out",
+                        progress_action="failed", progress_details="plan rejected or timed out")
             continue
 
         # --- Phase B: Execute ---
-        update_task(task_id, status="in_progress")
+        update_task(task_id, status="in_progress",
+                    progress_action="started execution")
         try:
             _, exec_output = run_cc(task["prompt"], mode="execute")
         except subprocess.TimeoutExpired:
-            update_task(task_id, status="failed", summary="Execution timed out")
+            update_task(task_id, status="failed", summary="Execution timed out",
+                        progress_action="failed", progress_details="execution timed out")
             continue
 
         if detect_decomposition(task_id):
-            update_task(task_id, status="decomposed")
+            update_task(task_id, status="decomposed",
+                        progress_action="decomposed into subtasks")
             print(f"[dispatcher] Task #{task_id} decomposed into subtasks.", flush=True)
         else:
             now = datetime.utcnow().isoformat()
             summary = exec_output[-2000:] if len(exec_output) > 2000 else exec_output
-            update_task(task_id, status="done", completed_at=now, summary=summary)
+            update_task(task_id, status="done", completed_at=now, summary=summary,
+                        progress_action="completed",
+                        progress_details=summary[:200] if summary else "")
             git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
-            append_progress(task_id, summary)
             print(f"[dispatcher] Task #{task_id} done.", flush=True)
 
 
