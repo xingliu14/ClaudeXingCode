@@ -9,21 +9,6 @@ email digest of progress. Safety and privacy first.
 
 ---
 
-## Recommendation: Local Mac + Tailscale (not EC2)
-
-**Why not EC2 like Ethan?**
-- EC2 puts code and prompts on a third-party server
-- Ongoing cloud cost (~$30–80/month)
-
-**Why Local Mac + Tailscale instead:**
-- Code stays on your machine (only prompts/context go to Anthropic's API)
-- Zero cloud cost
-- Tailscale gives encrypted, private phone access for free
-- Docker provides the same isolation benefit as EC2
-- Easy upgrade path to parallelism/cloud later
-
----
-
 ## Architecture (Single-Agent Loop)
 
 ```
@@ -35,7 +20,7 @@ Mac (running)
     │
     ├── Web UI (Flask, port 5001)         ← add tasks, review plans, monitor
     │
-    ├── Daily Email Digest (9 PM cron)    ← summary sent every evening
+    ├── Daily Email Digest (7 AM cron)    ← summary sent every morning
     │
     └── Docker Container
             │
@@ -100,127 +85,128 @@ CLAUDE.md instructs CC:
 
 ## Implementation Steps
 
-### Phase 1: Environment Setup
+### Phase 1: Environment Setup ✅ DONE
 
-1. Install **Docker Desktop** (if not already installed)
-2. Set up **Tailscale** on Mac + iPhone (free tier, ~5 min)
-3. Create `agent/Dockerfile`:
-   - Base: `ubuntu:22.04`
-   - Install: Node.js, git, Claude Code (`npm install -g @anthropic-ai/claude-code`)
-   - Mount: project dir as `/workspace`
-   - Mount: `~/.claude/` read-only (for CC auth token)
-4. Create `agent/docker-compose.yml` — defines mounts, env vars, ports
+1. ~~Install **Docker Desktop**~~ — already installed (v29.2.1)
+2. ✅ `agent/Dockerfile` — Ubuntu 22.04, Node.js 20, git, CC CLI (`2.1.61`)
+3. ✅ `agent/docker-compose.yml` — `WORKSPACE_PATH` env var makes it point to any repo
 
-### Phase 2: Core Instruction Files
+### Phase 2: Core Instruction Files ✅ DONE
 
-5. **`CLAUDE.md`** — written by you, covers:
-   - Project overview and current architecture
-   - Task decomposition rule (>30 min → break into subtasks)
-   - Commit rule: always commit after changes with clear message
-   - PROGRESS.md rule: append lessons learned after each task
-   - Code style and conventions
+5. ✅ **`CLAUDE.md`** — decomposition rule, commit rule, PROGRESS.md rule, code style, safety
+6. ✅ **`PROGRESS.md`** — created empty, ready for CC to append
+7. ✅ **`.claudeignore`** — excludes `.env`, secrets, build artifacts
 
-6. **`PROGRESS.md`** — starts empty, CC appends after each task
+### Phase 3: Task Queue ✅ DONE
 
-7. **`.claudeignore`** — exclude `.env`, secrets, build artifacts from CC context
+8. ✅ **`tasks.json`** — created with empty `tasks: []` array
+   Status values: `pending | in_progress | plan_review | approved | decomposed | done | failed`
 
-### Phase 3: Task Queue
+### Phase 4: Dispatcher — The Ralph Loop ✅ DONE (code written, not yet run end-to-end)
 
-8. **`tasks.json`** schema:
-   ```json
-   {
-     "tasks": [
-       {
-         "id": 1,
-         "status": "pending",
-         "prompt": "...",
-         "priority": "high",
-         "parent": null,
-         "plan": null,
-         "created_at": "2026-02-26T09:00:00",
-         "completed_at": null,
-         "summary": null
-       }
-     ]
-   }
-   ```
-   Status values: `pending | in_progress | plan_review | decomposed | done | failed`
+9. ✅ **`agent/dispatcher.py`** — full loop implemented:
+   - Priority-ordered task picking
+   - Plan mode → `plan_review` status → waits for web UI approval (polls every 10s, 24h timeout)
+   - Execute mode → decomposition detection → git commit → PROGRESS.md append
+   - Hard limit: 20 tasks/day
 
-### Phase 4: Dispatcher — The Ralph Loop
-
-9. **`agent/dispatcher.py`** — core loop:
-   ```
-   loop:
-     task = pick_highest_priority_pending_task()
-     if no task: sleep(60s), continue
-
-     # Phase A: Plan
-     task.status = "in_progress"
-     plan = run_cc(task.prompt, mode="plan")
-     task.plan = plan
-     task.status = "plan_review"
-
-     # Wait for user approval via web UI (timeout: 24h)
-     wait_for_approval(task)
-     if rejected: task.status = "failed"; continue
-
-     # Phase B: Execute
-     result = run_cc(task.prompt, mode="execute", stream_json=True)
-
-     if CC wrote subtasks to tasks.json:
-       task.status = "decomposed"
-     else:
-       git_commit(f"agent: complete task #{task.id}")
-       task.status = "done"
-       task.summary = result.summary
-       append_to_progress_md(result.lessons)
-   ```
-
-   CC is launched as:
+   CC launched as:
    ```bash
    claude -p "[prompt]" --dangerously-skip-permissions \
      --output-format stream-json --verbose
    ```
 
-   Hard limits:
-   - Max 20 tasks completed per day
-   - Halts when `tasks_completed_today >= daily_limit`
+### Phase 5: Web UI ✅ DONE (code written, not yet tested from browser)
 
-### Phase 5: Web UI
+10. ✅ **`agent/web_manager.py`** — minimal Flask app (plain HTML, no JS framework):
+    - `GET /` — Kanban board: Pending / In Progress / Awaiting Approval / Decomposed / Done / Failed
+    - `POST /tasks` — add task with priority selector
+    - `GET /tasks/<id>` — detail: plan output, result summary, subtasks list
+    - `POST /tasks/<id>/approve` — sets status → `approved`
+    - `POST /tasks/<id>/reject` — sets status → `rejected` with optional feedback
 
-10. **`agent/web_manager.py`** — minimal Flask app (plain HTML):
-    - `GET /` — task board with pending / in_progress / plan_review / done columns
-    - `POST /tasks` — add new task (browser speech-to-text supported natively)
-    - `GET /tasks/<id>` — task detail: plan output, CC log stream, subtasks tree
-    - `POST /tasks/<id>/approve` — approve plan → dispatcher executes
-    - `POST /tasks/<id>/reject` — reject with feedback
-    - Access from iPhone via Tailscale IP; add to home screen as PWA
+### Phase 6: Daily Email Digest ✅ DONE (code written, not yet tested)
 
-### Phase 6: Daily Email Digest
-
-11. **`agent/daily_digest.py`** — scheduled at 9 PM daily:
-    - Reads `tasks.json`, filters by `completed_at` date
-    - Builds plain-text summary
-    - Sends via `smtplib` (Gmail SMTP or any provider)
-    - SMTP credentials live in `agent/.env` (never mounted into Docker container,
-      never referenced in CC context)
+11. ✅ **`agent/daily_digest.py`** — cron-ready script:
+    - Reads `tasks.json`, filters by today's date
+    - Sends plain-text summary via `smtplib` (Gmail SMTP or any provider)
+    - SMTP credentials in `agent/.env` (gitignored, never mounted into Docker)
+    - ✅ **`agent/.env.example`** — template with required vars
 
     Email subject: `Agent Daily Report — 3 done, 2 pending [2026-02-26]`
 
-    Email body:
-    ```
-    ✓ Completed (3):
-      #4 — Added user profile page
-      #5 — Fixed mobile layout bug
-      #7 — Wrote tests for auth module
+### Phase 7: GitHub Repo Creation & Push (with Web UI Approval)
 
-    ⏳ Pending (2):
-      #8 — Implement search feature
-      #9 — Optimize DB queries
+**Goal:** Agent can create new GitHub repos and push commits to any repo it works on. Pushes require user approval via the Web UI (same pattern as plan approval).
 
-    ✗ Failed (1):
-      #6 — Deploy to staging (missing env var: DATABASE_URL)
-    ```
+#### 7a. Install `gh` CLI in Docker (`agent/Dockerfile`)
+
+Add GitHub CLI installation after existing apt packages:
+```dockerfile
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      | tee /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && apt-get install -y gh
+```
+
+#### 7b. Pass GitHub token + git identity into container (`agent/docker-compose.yml`)
+
+```yaml
+environment:
+  - GH_TOKEN=${GH_TOKEN}
+  - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-ClaudeXingCode Agent}
+  - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-agent@example.com}
+  - GIT_COMMITTER_NAME=${GIT_AUTHOR_NAME:-ClaudeXingCode Agent}
+  - GIT_COMMITTER_EMAIL=${GIT_AUTHOR_EMAIL:-agent@example.com}
+```
+
+Update `agent/.env.example` with:
+```
+GH_TOKEN=ghp_your-github-personal-access-token
+GIT_AUTHOR_NAME=ClaudeXingCode Agent
+GIT_AUTHOR_EMAIL=you@example.com
+```
+
+#### 7c. Add push approval flow to dispatcher (`agent/dispatcher.py`)
+
+After a successful git commit:
+1. Set task status to `"push_review"` in `tasks.json`
+2. Poll for approval (same pattern as `plan_review` → `approved`)
+3. On approval: run `git push` (set up remote if needed)
+4. On rejection: skip push, task marked `done` (committed locally only)
+
+New task status flow:
+```
+pending → in_progress → plan_review → approved → executing → push_review → pushed/done
+```
+
+New function:
+```python
+def git_push(task: dict) -> bool:
+    """Push current branch to remote. Returns True on success."""
+    result = subprocess.run(
+        ["git", "push"],
+        cwd=WORKSPACE,
+        capture_output=True, text=True
+    )
+    return result.returncode == 0
+```
+
+#### 7d. Add push approval UI (`agent/web_manager.py`)
+
+New routes:
+- `POST /tasks/<id>/approve-push` — sets status → `pushed`, dispatcher runs `git push`
+- `POST /tasks/<id>/reject-push` — sets status → `done` (local commit only)
+
+Update Kanban board to show a **"Push Review"** column.
+Update task detail page with push approve/reject buttons when status is `push_review`.
+
+#### 7e. Update `CLAUDE.md`
+
+- Remove "Never push to remote" rule
+- Replace with: "Pushing is handled by the dispatcher after Web UI approval. Do not push directly."
+- Add: "You may use `gh repo create` when a task requires creating a new repo, and `git remote add` to set up remotes."
 
 ---
 
@@ -245,32 +231,45 @@ your-project/
 
 ## Build Order
 
-1. `Dockerfile` + `docker-compose.yml` → verify CC runs and authenticates in container
-2. `tasks.json` + `dispatcher.py` (single task only, no loop) → verify CC executes one task
-3. Add loop + decomposition detection to `dispatcher.py`
-4. `web_manager.py` → verify add/approve flow from browser
-5. Tailscale → verify web UI accessible from phone
-6. `daily_digest.py` → verify email delivery
-7. Write `CLAUDE.md` for your specific project
+1. ✅ `Dockerfile` + `docker-compose.yml` → CC v2.1.61 runs and authenticates in container
+2. ⬅ **NEXT** Run dispatcher end-to-end on Mac — single task, verify plan → approve → execute → git commit
+3. Verify `dispatcher.py` loop + decomposition with a large task
+4. `web_manager.py` → verify add/approve flow from Mac browser
+5. `daily_digest.py` → verify email delivery
+6. Add `gh` CLI to Dockerfile + `GH_TOKEN` env var → verify `gh auth status` in container
+7. Add push approval flow to dispatcher + Web UI push approve/reject
+8. Update `CLAUDE.md` push rules → test repo creation + push approval end-to-end
+9. *(Later)* Tailscale + iPhone access
+10. ✅ `CLAUDE.md` written
 
 ---
 
 ## Future Scope (Not Now)
 
+- Tailscale + iPhone access (web UI accessible from phone, add to home screen as PWA)
+- Voice input via phone's native keyboard
 - Git worktrees for parallel agent execution
-- Voice input (use phone's native voice keyboard for now)
 - Auto-merge of agent branches to main
 
 ---
 
 ## Verification Checklist
 
-- [ ] Docker container starts; CC authenticates inside it
-- [ ] Tailscale: web UI reachable from iPhone
-- [ ] Add task via web UI → dispatcher picks it up
-- [ ] Plan shown in UI → approve → CC executes
+- [x] Docker image builds (`claude-agent:latest`)
+- [x] CC v2.1.61 runs inside container
+- [x] `~/.claude` auth token visible inside container (read-only mount)
+- [x] Node.js 20, Python 3.10, git all present in image
+- [ ] **Dispatcher runs one task end-to-end on Mac** (plan → approve → execute → git commit)
 - [ ] Large task → CC writes subtasks to `tasks.json` → dispatcher picks them up
-- [ ] Completed task → auto git commit appears
+- [ ] Completed task → auto git commit appears in workspace repo
 - [ ] PROGRESS.md updated after task completes
+- [ ] Add task via Mac browser web UI → dispatcher picks it up
 - [ ] Daily email arrives at 9 PM with correct summary
 - [ ] Daily task limit enforced (halts at 20 tasks/day)
+- [ ] `gh --version` works inside Docker container
+- [ ] `gh auth status` succeeds with `GH_TOKEN` in container
+- [ ] Completed task goes to `push_review` status after commit
+- [ ] Approve push via Web UI → `git push` succeeds
+- [ ] Reject push via Web UI → task marked `done`, no push
+- [ ] `gh repo create` works inside container (test with throwaway repo)
+- [ ] *(Later)* Tailscale: web UI reachable from iPhone
