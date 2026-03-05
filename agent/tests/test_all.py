@@ -177,9 +177,9 @@ class TestPickNextTask:
         assert pick_next_task(tasks)["id"] == 1
 
 
-class TestTasksCompletedToday:
+class TestTasksCompletedThisCycle:
     def test_counts_today(self):
-        from dispatcher import tasks_completed_today
+        from dispatcher import tasks_completed_this_cycle
 
         today = date.today().isoformat()
         tasks = [
@@ -187,24 +187,24 @@ class TestTasksCompletedToday:
             {"id": 2, "status": "done", "completed_at": f"{today}T14:00:00"},
             {"id": 3, "status": "pending"},
         ]
-        assert tasks_completed_today(tasks) == 2
+        assert tasks_completed_this_cycle(tasks) == 2
 
     def test_ignores_other_dates(self):
-        from dispatcher import tasks_completed_today
+        from dispatcher import tasks_completed_this_cycle
 
         tasks = [
             {"id": 1, "status": "done", "completed_at": "2020-01-01T10:00:00"},
         ]
-        assert tasks_completed_today(tasks) == 0
+        assert tasks_completed_this_cycle(tasks) == 0
 
     def test_ignores_non_done(self):
-        from dispatcher import tasks_completed_today
+        from dispatcher import tasks_completed_this_cycle
 
         today = date.today().isoformat()
         tasks = [
             {"id": 1, "status": "stopped", "completed_at": f"{today}T10:00:00"},
         ]
-        assert tasks_completed_today(tasks) == 0
+        assert tasks_completed_this_cycle(tasks) == 0
 
 
 class TestParseStreamJson:

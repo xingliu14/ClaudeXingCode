@@ -21,7 +21,7 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - WORKSPACE=/workspace
-      - DAILY_TASK_LIMIT=${DAILY_TASK_LIMIT:-20}
+      - TASK_TOKEN_LIMIT=${TASK_TOKEN_LIMIT:-20}
       - PLAN_APPROVAL_TIMEOUT_HOURS=${PLAN_APPROVAL_TIMEOUT_HOURS:-24}
 
     ports:

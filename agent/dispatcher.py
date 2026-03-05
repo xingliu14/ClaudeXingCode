@@ -16,7 +16,7 @@ from progress_logger import log_progress
 from task_store import load_tasks, save_tasks, locked_update, TASKS_FILE
 
 WORKSPACE = os.environ.get("WORKSPACE", "/workspace")
-DAILY_LIMIT = int(os.environ.get("DAILY_TASK_LIMIT", "20"))
+TOKEN_LIMIT = int(os.environ.get("TASK_TOKEN_LIMIT", "20"))
 PLAN_TIMEOUT_HOURS = int(os.environ.get("PLAN_APPROVAL_TIMEOUT_HOURS", "24"))
 STATUS_FILE = TASKS_FILE.parent / "dispatcher_status.json"
 
@@ -69,7 +69,7 @@ def pick_approved_task(tasks: list) -> dict | None:
     return sorted(approved, key=lambda t: (PRIORITY_ORDER.get(t.get("priority", "medium"), 1), t["id"]))[0]
 
 
-def tasks_completed_today(tasks: list) -> int:
+def tasks_completed_this_cycle(tasks: list) -> int:
     today = date.today().isoformat()
     return sum(
         1 for t in tasks
@@ -209,11 +209,11 @@ def main() -> None:
 
     while True:
         data = load_tasks()
-        completed_today = tasks_completed_today(data["tasks"])
+        completed_count = tasks_completed_this_cycle(data["tasks"])
 
-        if completed_today >= DAILY_LIMIT:
-            write_status("sleeping", f"Daily limit ({DAILY_LIMIT}) reached")
-            print(f"[dispatcher] Daily limit of {DAILY_LIMIT} tasks reached. Sleeping until midnight...", flush=True)
+        if completed_count >= TOKEN_LIMIT:
+            write_status("sleeping", f"Token limit ({TOKEN_LIMIT}) reached")
+            print(f"[dispatcher] Token limit of {TOKEN_LIMIT} tasks reached. Sleeping...", flush=True)
             time.sleep(3600)
             continue
 
