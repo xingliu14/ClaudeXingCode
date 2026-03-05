@@ -19,6 +19,25 @@ DETAILS_DIR = WORKSPACE / "progress"
 
 MAX_INLINE_LEN = 120
 
+# Map action keywords to stage labels for readability
+ACTION_STAGE = {
+    "created": "PENDING",
+    "edited": "PENDING",
+    "requeued (retry)": "PENDING",
+    "started planning": "RUNNING",
+    "started execution": "RUNNING",
+    "plan approved": "RUNNING",
+    "plan ready for review": "REVIEW PLAN",
+    "plan rejected": "STOPPED",
+    "stopped": "STOPPED",
+    "cancelled by user": "STOPPED",
+    "completed": "DONE",
+    "push approved": "DONE",
+    "push skipped": "DONE",
+    "deleted": "DELETED",
+    "decomposed into subtasks": "DECOMPOSED",
+}
+
 
 def log_progress(task_id: int | None, action: str, details: str = "") -> None:
     """Record a progress entry and rebuild PROGRESS.md."""
@@ -54,7 +73,7 @@ def log_progress(task_id: int | None, action: str, details: str = "") -> None:
 
 def _rebuild_progress() -> None:
     """Read all entries from JSONL and write PROGRESS.md grouped by task,
-    newest tasks first, entries within each task in chronological order."""
+    newest tasks first, entries within each task newest first."""
     entries = []
     if ENTRIES_FILE.exists():
         for line in ENTRIES_FILE.read_text().splitlines():
@@ -85,8 +104,8 @@ def _rebuild_progress() -> None:
 
     for tid in sorted_task_ids:
         task_entries = groups[tid]
-        # Entries within a task in chronological order
-        task_entries.sort(key=lambda e: e["ts"])
+        # Entries within a task newest first
+        task_entries.sort(key=lambda e: e["ts"], reverse=True)
 
         if tid is not None:
             lines.append(f"\n## Task #{tid}\n")
@@ -95,7 +114,8 @@ def _rebuild_progress() -> None:
 
         for e in task_entries:
             detail_part = f" — {e['details']}" if e.get("details") else ""
-            lines.append(f"- `{e['ts']}` {e['action']}{detail_part}")
+            stage = ACTION_STAGE.get(e["action"], "INFO")
+            lines.append(f"- `{e['ts']}` **[{stage}]** {e['action']}{detail_part}")
 
     lines.append("")  # trailing newline
     PROGRESS_FILE.write_text("\n".join(lines))

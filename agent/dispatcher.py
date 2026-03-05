@@ -9,40 +9,47 @@ import json
 import os
 import subprocess
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from pathlib import Path
 
 from progress_logger import log_progress
+from task_store import load_tasks, save_tasks, locked_update, TASKS_FILE
 
-TASKS_FILE = Path(os.environ.get("TASKS_FILE", "/agent/tasks.json"))
 WORKSPACE = os.environ.get("WORKSPACE", "/workspace")
 DAILY_LIMIT = int(os.environ.get("DAILY_TASK_LIMIT", "20"))
 PLAN_TIMEOUT_HOURS = int(os.environ.get("PLAN_APPROVAL_TIMEOUT_HOURS", "24"))
+STATUS_FILE = TASKS_FILE.parent / "dispatcher_status.json"
 
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
 # ---------------------------------------------------------------------------
-# tasks.json helpers
+# Status file — read by the web UI header
 # ---------------------------------------------------------------------------
 
-def load_tasks() -> dict:
-    if not TASKS_FILE.exists():
-        return {"tasks": []}
-    return json.loads(TASKS_FILE.read_text())
+def write_status(state: str, label: str, task_id: int | None = None) -> None:
+    """Write dispatcher state to a JSON file for the web UI to display."""
+    status = {"state": state, "label": label}
+    if task_id is not None:
+        status["task_id"] = task_id
+    try:
+        STATUS_FILE.write_text(json.dumps(status))
+    except OSError:
+        pass
 
 
-def save_tasks(data: dict) -> None:
-    TASKS_FILE.write_text(json.dumps(data, indent=2))
-
+# ---------------------------------------------------------------------------
+# Task helpers
+# ---------------------------------------------------------------------------
 
 def update_task(task_id: int, progress_action: str = "", progress_details: str = "", **kwargs) -> None:
-    data = load_tasks()
-    for t in data["tasks"]:
-        if t["id"] == task_id:
-            t.update(kwargs)
-            break
-    save_tasks(data)
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id:
+                t.update(kwargs)
+                break
+
+    locked_update(mutate)
     if progress_action:
         log_progress(task_id, progress_action, progress_details)
 
@@ -52,6 +59,14 @@ def pick_next_task(tasks: list) -> dict | None:
     if not pending:
         return None
     return sorted(pending, key=lambda t: (PRIORITY_ORDER.get(t.get("priority", "medium"), 1), t["id"]))[0]
+
+
+def pick_approved_task(tasks: list) -> dict | None:
+    """Find a task that was approved (in_progress) but never executed (has a plan)."""
+    approved = [t for t in tasks if t["status"] == "in_progress" and t.get("plan")]
+    if not approved:
+        return None
+    return sorted(approved, key=lambda t: (PRIORITY_ORDER.get(t.get("priority", "medium"), 1), t["id"]))[0]
 
 
 def tasks_completed_today(tasks: list) -> int:
@@ -190,48 +205,61 @@ def detect_decomposition(task_id: int) -> bool:
 
 def main() -> None:
     print("[dispatcher] Ralph Loop starting...", flush=True)
+    write_status("idle", "Idle")
 
     while True:
         data = load_tasks()
         completed_today = tasks_completed_today(data["tasks"])
 
         if completed_today >= DAILY_LIMIT:
+            write_status("sleeping", f"Daily limit ({DAILY_LIMIT}) reached")
             print(f"[dispatcher] Daily limit of {DAILY_LIMIT} tasks reached. Sleeping until midnight...", flush=True)
             time.sleep(3600)
             continue
 
-        task = pick_next_task(data["tasks"])
-        if task is None:
-            print("[dispatcher] No pending tasks. Sleeping 60s...", flush=True)
-            time.sleep(60)
-            continue
+        # Check for approved tasks first (approved while dispatcher was not running)
+        approved_task = pick_approved_task(data["tasks"])
+        if approved_task:
+            task = approved_task
+            task_id = task["id"]
+            print(f"[dispatcher] Resuming approved task #{task_id}: {task['prompt'][:80]}", flush=True)
+        else:
+            task = pick_next_task(data["tasks"])
+            if task is None:
+                write_status("idle", "Idle — no pending tasks")
+                print("[dispatcher] No pending tasks. Sleeping 60s...", flush=True)
+                time.sleep(60)
+                continue
 
-        task_id = task["id"]
-        print(f"[dispatcher] Starting task #{task_id}: {task['prompt'][:80]}", flush=True)
+            task_id = task["id"]
+            print(f"[dispatcher] Starting task #{task_id}: {task['prompt'][:80]}", flush=True)
 
-        # --- Phase A: Plan ---
-        update_task(task_id, status="in_progress",
-                    progress_action="started planning",
-                    progress_details=task["prompt"][:80])
-        try:
-            _, plan_output = run_cc(task["prompt"], mode="plan")
-        except subprocess.TimeoutExpired:
-            update_task(task_id, status="stopped", stop_reason="timeout",
-                        summary="Plan step timed out",
-                        progress_action="stopped", progress_details="plan step timed out")
-            continue
+            # --- Phase A: Plan ---
+            write_status("running", f"Planning #{task_id}", task_id)
+            update_task(task_id, status="in_progress",
+                        progress_action="started planning",
+                        progress_details=task["prompt"][:80])
+            try:
+                _, plan_output = run_cc(task["prompt"], mode="plan")
+            except subprocess.TimeoutExpired:
+                update_task(task_id, status="stopped", stop_reason="timeout",
+                            summary="Plan step timed out",
+                            progress_action="stopped", progress_details="plan step timed out")
+                continue
 
-        update_task(task_id, status="plan_review", plan=plan_output,
-                    progress_action="plan ready for review")
+            update_task(task_id, status="plan_review", plan=plan_output,
+                        progress_action="plan ready for review")
 
-        approved = wait_for_approval(task)
-        if not approved:
-            update_task(task_id, status="stopped", stop_reason="rejected",
-                        summary="Plan rejected or timed out",
-                        progress_action="stopped", progress_details="plan rejected or timed out")
-            continue
+            write_status("sleeping", f"Awaiting approval #{task_id}", task_id)
+            approved = wait_for_approval(task)
+            if not approved:
+                update_task(task_id, status="stopped", stop_reason="rejected",
+                            summary="Plan rejected or timed out",
+                            progress_action="stopped", progress_details="plan rejected or timed out")
+                continue
 
         # --- Phase B: Execute ---
+        write_status("running", f"Executing #{task_id}", task_id)
         update_task(task_id, status="in_progress",
                     progress_action="started execution")
         try:
@@ -247,7 +275,7 @@ def main() -> None:
                         progress_action="decomposed into subtasks")
             print(f"[dispatcher] Task #{task_id} decomposed into subtasks.", flush=True)
         else:
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             summary = exec_output[-2000:] if len(exec_output) > 2000 else exec_output
             update_task(task_id, status="done", completed_at=now, summary=summary,
                         progress_action="completed",

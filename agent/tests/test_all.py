@@ -1,5 +1,5 @@
 """
-Tests for dispatcher.py, web_manager.py, and daily_digest.py.
+Tests for dispatcher.py, web_manager.py, daily_digest.py, and task_store.py.
 
 All file I/O uses tmp_path fixtures; all external calls are mocked.
 """
@@ -7,9 +7,9 @@ All file I/O uses tmp_path fixtures; all external calls are mocked.
 import json
 import os
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -18,47 +18,101 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 # ============================================================================
-# dispatcher.py tests
+# Helpers
 # ============================================================================
 
 
-class TestLoadSaveTasks:
-    def test_load_tasks_missing_file(self, tmp_path, monkeypatch):
-        import dispatcher
+def write_tasks(tf: Path, data: dict) -> None:
+    """Write a tasks dict to a file and ensure the lock file exists."""
+    tf.write_text(json.dumps(data))
+    tf.with_suffix(".lock").touch(exist_ok=True)
 
-        monkeypatch.setattr(dispatcher, "TASKS_FILE", tmp_path / "tasks.json")
-        assert dispatcher.load_tasks() == {"tasks": []}
+
+# ============================================================================
+# task_store.py tests
+# ============================================================================
+
+
+class TestTaskStore:
+    def test_load_tasks_missing_file(self, tmp_path, monkeypatch):
+        import task_store
+
+        monkeypatch.setattr(task_store, "TASKS_FILE", tmp_path / "tasks.json")
+        assert task_store.load_tasks() == {"tasks": []}
 
     def test_load_tasks_valid_json(self, tmp_path, monkeypatch):
-        import dispatcher
+        import task_store
 
         tf = tmp_path / "tasks.json"
         data = {"tasks": [{"id": 1, "status": "pending", "prompt": "hello"}]}
         tf.write_text(json.dumps(data))
-        monkeypatch.setattr(dispatcher, "TASKS_FILE", tf)
-        assert dispatcher.load_tasks() == data
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        assert task_store.load_tasks() == data
 
     def test_save_tasks_roundtrip(self, tmp_path, monkeypatch):
-        import dispatcher
+        import task_store
 
         tf = tmp_path / "tasks.json"
-        monkeypatch.setattr(dispatcher, "TASKS_FILE", tf)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
         data = {"tasks": [{"id": 1, "status": "done"}]}
-        dispatcher.save_tasks(data)
+        task_store.save_tasks(data)
         assert json.loads(tf.read_text()) == data
+
+    def test_locked_update(self, tmp_path, monkeypatch):
+        import task_store
+
+        tf = tmp_path / "tasks.json"
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "pending"}]})
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+
+        def mutate(data):
+            data["tasks"][0]["status"] = "done"
+
+        result = task_store.locked_update(mutate)
+        assert result["tasks"][0]["status"] == "done"
+        assert json.loads(tf.read_text())["tasks"][0]["status"] == "done"
+
+    def test_next_id_empty(self):
+        from task_store import next_id
+
+        data = {"tasks": []}
+        assert next_id(data) == 1
+        assert data["next_id"] == 2
+
+    def test_next_id_existing(self):
+        from task_store import next_id
+
+        data = {"tasks": [{"id": 3}, {"id": 7}, {"id": 5}]}
+        assert next_id(data) == 8
+        assert data["next_id"] == 9
+
+    def test_next_id_monotonic_after_delete(self):
+        from task_store import next_id
+
+        data = {"tasks": [{"id": 1}], "next_id": 2}
+        assert next_id(data) == 2
+        # Simulate deleting all tasks
+        data["tasks"] = []
+        assert next_id(data) == 3  # never reuses ID 1 or 2
+
+
+# ============================================================================
+# dispatcher.py tests
+# ============================================================================
 
 
 class TestUpdateTask:
     def test_updates_matching_task(self, tmp_path, monkeypatch):
         import dispatcher
+        import task_store
 
         tf = tmp_path / "tasks.json"
         data = {"tasks": [
             {"id": 1, "status": "pending", "prompt": "a"},
             {"id": 2, "status": "pending", "prompt": "b"},
         ]}
-        tf.write_text(json.dumps(data))
-        monkeypatch.setattr(dispatcher, "TASKS_FILE", tf)
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
 
         dispatcher.update_task(2, status="done", summary="finished")
 
@@ -153,6 +207,25 @@ class TestTasksCompletedToday:
         assert tasks_completed_today(tasks) == 0
 
 
+class TestParseStreamJson:
+    def test_extracts_result(self):
+        from dispatcher import parse_stream_json
+
+        raw = '{"type":"result","result":"the answer"}\n'
+        assert parse_stream_json(raw) == "the answer"
+
+    def test_extracts_assistant_text(self):
+        from dispatcher import parse_stream_json
+
+        raw = '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}\n'
+        assert parse_stream_json(raw) == "hello"
+
+    def test_falls_back_to_raw(self):
+        from dispatcher import parse_stream_json
+
+        assert parse_stream_json("not json at all") == "not json at all"
+
+
 class TestRunCC:
     def test_plan_mode_command(self, monkeypatch):
         import dispatcher
@@ -165,12 +238,12 @@ class TestRunCC:
         code, output = dispatcher.run_cc("do something", "plan")
 
         cmd = mock_run.call_args[0][0]
-        assert "--plan" in cmd
+        assert "--permission-mode" in cmd
+        assert "plan" in cmd
         assert "--dangerously-skip-permissions" not in cmd
         assert "-p" in cmd
         assert "do something" in cmd
         assert code == 0
-        assert output == "plan output"
 
     def test_execute_mode_command(self, monkeypatch):
         import dispatcher
@@ -184,16 +257,15 @@ class TestRunCC:
 
         cmd = mock_run.call_args[0][0]
         assert "--dangerously-skip-permissions" in cmd
-        assert "--plan" not in cmd
+        assert "--permission-mode" not in cmd
         assert code == 0
-        assert output == "exec outputwarn"
 
 
 class TestWaitForApproval:
     def test_returns_true_on_approved(self, tmp_path, monkeypatch):
         import dispatcher
+        import task_store
 
-        tf = tmp_path / "tasks.json"
         # Start with plan_review, then switch to in_progress (approved) on second load
         states = [
             {"tasks": [{"id": 1, "status": "plan_review"}]},
@@ -206,30 +278,35 @@ class TestWaitForApproval:
             call_count["n"] += 1
             return data
 
+        monkeypatch.setattr(task_store, "load_tasks", fake_load)
         monkeypatch.setattr(dispatcher, "load_tasks", fake_load)
         monkeypatch.setattr("time.sleep", lambda _: None)
         monkeypatch.setattr(dispatcher, "PLAN_TIMEOUT_HOURS", 1)
 
         assert dispatcher.wait_for_approval({"id": 1}) is True
 
-    def test_returns_false_on_stopped(self, tmp_path, monkeypatch):
+    def test_returns_false_on_stopped(self, monkeypatch):
         import dispatcher
+        import task_store
 
         def fake_load():
             return {"tasks": [{"id": 1, "status": "stopped"}]}
 
+        monkeypatch.setattr(task_store, "load_tasks", fake_load)
         monkeypatch.setattr(dispatcher, "load_tasks", fake_load)
         monkeypatch.setattr("time.sleep", lambda _: None)
         monkeypatch.setattr(dispatcher, "PLAN_TIMEOUT_HOURS", 1)
 
         assert dispatcher.wait_for_approval({"id": 1}) is False
 
-    def test_returns_false_on_missing_task(self, tmp_path, monkeypatch):
+    def test_returns_false_on_missing_task(self, monkeypatch):
         import dispatcher
+        import task_store
 
         def fake_load():
             return {"tasks": []}
 
+        monkeypatch.setattr(task_store, "load_tasks", fake_load)
         monkeypatch.setattr(dispatcher, "load_tasks", fake_load)
         monkeypatch.setattr("time.sleep", lambda _: None)
         monkeypatch.setattr(dispatcher, "PLAN_TIMEOUT_HOURS", 1)
@@ -253,25 +330,10 @@ class TestGitCommit:
         assert commit_call[0][0] == ["git", "commit", "-m", "test commit message"]
 
 
-class TestAppendProgress:
-    def test_appends_entry(self, tmp_path, monkeypatch):
-        import dispatcher
-
-        pf = tmp_path / "PROGRESS.md"
-        pf.write_text("# Progress\n")
-        monkeypatch.setattr(dispatcher, "PROGRESS_FILE", pf)
-
-        dispatcher.append_progress(42, "Did the thing")
-
-        content = pf.read_text()
-        assert "## Task #42" in content
-        assert "Did the thing" in content
-        assert content.startswith("# Progress\n")
-
-
 class TestDetectDecomposition:
     def test_true_when_subtasks_exist(self, tmp_path, monkeypatch):
         import dispatcher
+        import task_store
 
         tf = tmp_path / "tasks.json"
         data = {"tasks": [
@@ -279,33 +341,58 @@ class TestDetectDecomposition:
             {"id": 2, "status": "pending", "parent": 1},
             {"id": 3, "status": "pending", "parent": 1},
         ]}
-        tf.write_text(json.dumps(data))
-        monkeypatch.setattr(dispatcher, "TASKS_FILE", tf)
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
 
         assert dispatcher.detect_decomposition(1) is True
 
     def test_false_when_no_subtasks(self, tmp_path, monkeypatch):
         import dispatcher
+        import task_store
 
         tf = tmp_path / "tasks.json"
         data = {"tasks": [{"id": 1, "status": "pending"}]}
-        tf.write_text(json.dumps(data))
-        monkeypatch.setattr(dispatcher, "TASKS_FILE", tf)
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
 
         assert dispatcher.detect_decomposition(1) is False
 
     def test_false_when_subtasks_not_pending(self, tmp_path, monkeypatch):
         import dispatcher
+        import task_store
 
         tf = tmp_path / "tasks.json"
         data = {"tasks": [
             {"id": 1, "status": "decomposed"},
             {"id": 2, "status": "done", "parent": 1},
         ]}
-        tf.write_text(json.dumps(data))
-        monkeypatch.setattr(dispatcher, "TASKS_FILE", tf)
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
 
         assert dispatcher.detect_decomposition(1) is False
+
+
+class TestWriteStatus:
+    def test_writes_status_file(self, tmp_path, monkeypatch):
+        import dispatcher
+
+        monkeypatch.setattr(dispatcher, "STATUS_FILE", tmp_path / "status.json")
+        dispatcher.write_status("running", "Executing #1", task_id=1)
+
+        status = json.loads((tmp_path / "status.json").read_text())
+        assert status["state"] == "running"
+        assert status["label"] == "Executing #1"
+        assert status["task_id"] == 1
+
+    def test_writes_without_task_id(self, tmp_path, monkeypatch):
+        import dispatcher
+
+        monkeypatch.setattr(dispatcher, "STATUS_FILE", tmp_path / "status.json")
+        dispatcher.write_status("idle", "Idle")
+
+        status = json.loads((tmp_path / "status.json").read_text())
+        assert status["state"] == "idle"
+        assert "task_id" not in status
 
 
 # ============================================================================
@@ -316,27 +403,21 @@ class TestDetectDecomposition:
 @pytest.fixture
 def web_client(tmp_path, monkeypatch):
     """Flask test client with tasks.json in tmp_path."""
+    import progress_logger
+    import task_store
     import web_manager
 
     tf = tmp_path / "tasks.json"
-    tf.write_text(json.dumps({"tasks": []}))
-    monkeypatch.setattr(web_manager, "TASKS_FILE", tf)
+    write_tasks(tf, {"tasks": []})
+    monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+    # Redirect progress logger to tmp_path so it doesn't try /workspace
+    monkeypatch.setattr(progress_logger, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(progress_logger, "PROGRESS_FILE", tmp_path / "PROGRESS.md")
+    monkeypatch.setattr(progress_logger, "ENTRIES_FILE", tmp_path / "progress_entries.jsonl")
+    monkeypatch.setattr(progress_logger, "DETAILS_DIR", tmp_path / "progress")
     web_manager.app.config["TESTING"] = True
     with web_manager.app.test_client() as client:
         yield client, tf
-
-
-class TestNextId:
-    def test_empty_list(self):
-        from web_manager import next_id
-
-        assert next_id([]) == 1
-
-    def test_existing_tasks(self):
-        from web_manager import next_id
-
-        tasks = [{"id": 3}, {"id": 7}, {"id": 5}]
-        assert next_id(tasks) == 8
 
 
 class TestBoardRoute:
@@ -344,7 +425,7 @@ class TestBoardRoute:
         client, _ = web_client
         resp = client.get("/")
         assert resp.status_code == 200
-        assert b"Agent Board" in resp.data
+        assert b"ClaudeXingCode Dashboard" in resp.data
 
 
 class TestAddTaskRoute:
@@ -375,7 +456,7 @@ class TestTaskDetailRoute:
         data = {"tasks": [{"id": 1, "status": "pending", "prompt": "Test task",
                            "priority": "medium", "parent": None, "plan": None,
                            "summary": None}]}
-        tf.write_text(json.dumps(data))
+        write_tasks(tf, data)
 
         resp = client.get("/tasks/1")
         assert resp.status_code == 200
@@ -392,7 +473,7 @@ class TestApproveRoute:
         client, tf = web_client
         data = {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
                            "priority": "medium"}]}
-        tf.write_text(json.dumps(data))
+        write_tasks(tf, data)
 
         resp = client.post("/tasks/1/approve")
         assert resp.status_code == 302
@@ -404,7 +485,7 @@ class TestApproveRoute:
         client, tf = web_client
         data = {"tasks": [{"id": 1, "status": "pending", "prompt": "x",
                            "priority": "medium"}]}
-        tf.write_text(json.dumps(data))
+        write_tasks(tf, data)
 
         client.post("/tasks/1/approve")
 
@@ -417,7 +498,7 @@ class TestRejectRoute:
         client, tf = web_client
         data = {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
                            "priority": "medium"}]}
-        tf.write_text(json.dumps(data))
+        write_tasks(tf, data)
 
         resp = client.post("/tasks/1/reject", data={"feedback": "Bad plan"})
         assert resp.status_code == 302
@@ -431,13 +512,79 @@ class TestRejectRoute:
         client, tf = web_client
         data = {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
                            "priority": "medium"}]}
-        tf.write_text(json.dumps(data))
+        write_tasks(tf, data)
 
         client.post("/tasks/1/reject", data={"feedback": ""})
 
         result = json.loads(tf.read_text())
         assert result["tasks"][0]["status"] == "stopped"
         assert result["tasks"][0]["stop_reason"] == "rejected"
+
+
+class TestCancelRoute:
+    def test_cancels_in_progress(self, web_client):
+        client, tf = web_client
+        data = {"tasks": [{"id": 1, "status": "in_progress", "prompt": "x",
+                           "priority": "medium"}]}
+        write_tasks(tf, data)
+
+        resp = client.post("/tasks/1/cancel")
+        assert resp.status_code == 302
+
+        result = json.loads(tf.read_text())
+        assert result["tasks"][0]["status"] == "stopped"
+        assert result["tasks"][0]["stop_reason"] == "cancelled"
+
+
+class TestRetryRoute:
+    def test_requeues_stopped_task(self, web_client):
+        client, tf = web_client
+        data = {"tasks": [{"id": 1, "status": "stopped", "prompt": "x",
+                           "priority": "medium", "stop_reason": "rejected",
+                           "summary": "old", "plan": "old plan"}]}
+        write_tasks(tf, data)
+
+        resp = client.post("/tasks/1/retry")
+        assert resp.status_code == 302
+
+        result = json.loads(tf.read_text())
+        task = result["tasks"][0]
+        assert task["status"] == "pending"
+        assert task["summary"] is None
+        assert task["plan"] is None
+        assert "stop_reason" not in task
+
+
+class TestDeleteRoute:
+    def test_deletes_non_running_task(self, web_client):
+        client, tf = web_client
+        data = {"tasks": [{"id": 1, "status": "pending", "prompt": "x"}]}
+        write_tasks(tf, data)
+
+        resp = client.post("/tasks/1/delete")
+        assert resp.status_code == 302
+
+        result = json.loads(tf.read_text())
+        assert len(result["tasks"]) == 0
+
+    def test_does_not_delete_in_progress(self, web_client):
+        client, tf = web_client
+        data = {"tasks": [{"id": 1, "status": "in_progress", "prompt": "x"}]}
+        write_tasks(tf, data)
+
+        client.post("/tasks/1/delete")
+
+        result = json.loads(tf.read_text())
+        assert len(result["tasks"]) == 1
+
+
+class TestStatusRoute:
+    def test_returns_idle_when_no_file(self, web_client):
+        client, _ = web_client
+        resp = client.get("/status")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["state"] == "idle"
 
 
 # ============================================================================

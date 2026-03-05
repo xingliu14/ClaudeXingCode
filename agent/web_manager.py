@@ -9,9 +9,9 @@ Routes:
   POST /tasks/<id>/delete        - delete task
   POST /tasks/<id>/approve       - approve plan -> dispatcher executes
   POST /tasks/<id>/reject        - reject plan with feedback
-  POST /tasks/<id>/cancel        - cancel in-progress task -> failed
-  POST /tasks/<id>/retry         - requeue failed/done task -> pending
-  POST /tasks/<id>/approve-push  - approve push -> dispatcher runs git push
+  POST /tasks/<id>/cancel        - cancel in-progress task -> stopped
+  POST /tasks/<id>/retry         - requeue stopped/done task -> pending
+  POST /tasks/<id>/approve-push  - approve push -> done (with pushed_at)
   POST /tasks/<id>/reject-push   - reject push -> done (local commit only)
   GET  /progress                 - view PROGRESS.md
   GET  /log                      - view recent git log
@@ -21,35 +21,17 @@ Routes:
 import json
 import os
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, redirect, render_template_string, request, url_for, jsonify
 from progress_logger import log_progress
+from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE
 
-TASKS_FILE = Path(os.environ.get("TASKS_FILE", "/agent/tasks.json"))
 WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace"))
 PROGRESS_FILE = WORKSPACE / "PROGRESS.md"
 
 app = Flask(__name__)
-
-
-# ---------------------------------------------------------------------------
-# tasks.json helpers
-# ---------------------------------------------------------------------------
-
-def load_tasks() -> dict:
-    if not TASKS_FILE.exists():
-        return {"tasks": []}
-    return json.loads(TASKS_FILE.read_text())
-
-
-def save_tasks(data: dict) -> None:
-    TASKS_FILE.write_text(json.dumps(data, indent=2))
-
-
-def next_id(tasks: list) -> int:
-    return max((t["id"] for t in tasks), default=0) + 1
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +43,7 @@ SHARED_CSS = """
     header { background: #1a1a2e; color: #fff; padding: 1rem 1.5rem; display: flex;
              align-items: center; justify-content: space-between; }
     header h1 { margin: 0; font-size: 1.2rem; }
-    header nav { display: flex; gap: 1rem; }
+    header nav { display: flex; gap: 1rem; align-items: center; }
     header nav a { color: #ccc; text-decoration: none; font-size: 0.85rem; }
     header nav a:hover { color: #fff; }
     .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
@@ -79,6 +61,15 @@ SHARED_CSS = """
     .btn-cancel  { background: #d97706; color: #fff; }
     .btn-retry   { background: #0891b2; color: #fff; }
     .btn-sm      { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
+    .state-badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px;
+                   font-size: 0.75rem; font-weight: 600; }
+    .state-pending      { background: #e0e7ff; color: #3730a3; }
+    .state-in_progress  { background: #dbeafe; color: #1d4ed8; }
+    .state-plan_review  { background: #fef3c7; color: #92400e; }
+    .state-push_review  { background: #fef3c7; color: #92400e; }
+    .state-done         { background: #dcfce7; color: #166534; }
+    .state-stopped      { background: #fee2e2; color: #991b1b; }
+    .state-decomposed   { background: #f3e8ff; color: #6b21a8; }
 """
 
 # ---------------------------------------------------------------------------
@@ -118,25 +109,53 @@ BOARD_HTML = """
   <title>ClaudeXingCode Dashboard</title>
   <style>
     """ + SHARED_CSS + """
-    .board { display: flex; gap: 1rem; padding: 1rem; overflow-x: auto; }
-    .col { background: #fff; border-radius: 8px; min-width: 200px; flex: 1; padding: 0.75rem; }
-    .col h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;
-               color: #666; margin: 0 0 0.75rem; }
+    /* --- Pipeline section --- */
+    .section-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+                     color: #999; padding: 0.75rem 1rem 0; font-weight: 600; }
+    .pipeline { display: flex; gap: 0; padding: 0 1rem 0.5rem; overflow-x: auto; align-items: stretch; }
+    .pipe-arrow { display: flex; align-items: center; color: #cbd5e1; font-size: 1.2rem;
+                  padding: 0 0.15rem; user-select: none; margin-top: 1.8rem; }
+    .col { background: #fff; border-radius: 8px; min-width: 180px; flex: 1;
+           padding: 0.6rem; border-top: 3px solid #e5e7eb; }
+    .col-pending     { border-top-color: #818cf8; }
+    .col-in_progress { border-top-color: #3b82f6; }
+    .col-plan_review { border-top-color: #f59e0b; }
+    .col-push_review { border-top-color: #f59e0b; }
+    .col-done        { border-top-color: #22c55e; }
+    .col-stopped     { border-top-color: #ef4444; }
+    .col-decomposed  { border-top-color: #a855f7; }
+    .col h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;
+               color: #666; margin: 0 0 0.6rem; display: flex; align-items: center; gap: 0.4rem; }
     .col h2 .count { font-weight: normal; color: #aaa; }
+    .col h2 .gate-icon { font-size: 0.7rem; }
     .card { background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px;
-            padding: 0.6rem; margin-bottom: 0.5rem; font-size: 0.85rem; }
+            padding: 0.5rem; margin-bottom: 0.4rem; font-size: 0.82rem; }
     .card a { color: #1a1a2e; text-decoration: none; font-weight: 600; }
-    .card .meta { color: #888; font-size: 0.75rem; margin-top: 0.3rem; }
-    .badge { display: inline-block; padding: 0.15rem 0.4rem; border-radius: 4px;
-             font-size: 0.7rem; font-weight: 600; }
+    .card .meta { color: #888; font-size: 0.72rem; margin-top: 0.25rem;
+                  display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+    .badge { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
+             font-size: 0.65rem; font-weight: 600; }
     .badge-high { background: #fee2e2; color: #b91c1c; }
     .badge-medium { background: #fef9c3; color: #92400e; }
     .badge-low { background: #dcfce7; color: #166534; }
-    form.add { padding: 0 1rem 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .reason-tag { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
+                  font-size: 0.65rem; font-weight: 600; background: #fecaca; color: #991b1b; }
+    .pushed-tag { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
+                  font-size: 0.65rem; font-weight: 600; background: #d1fae5; color: #065f46; }
+    /* --- Off-ramp row --- */
+    .offramp { display: flex; gap: 1rem; padding: 0 1rem 1rem; }
+    .offramp .col { flex: none; min-width: 250px; max-width: 350px; }
+    /* --- Add form --- */
+    form.add { padding: 0 1rem 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
     form.add textarea { flex: 1; min-width: 200px; padding: 0.5rem; border-radius: 6px;
                         border: 1px solid #ccc; font-size: 0.9rem; }
     form.add select, form.add button { padding: 0.5rem; border-radius: 6px; border: 1px solid #ccc; }
     form.add button { background: #1a1a2e; color: #fff; border: none; cursor: pointer; }
+    .toolbar { padding: 0 1rem 0.5rem; display: flex; gap: 0.5rem; align-items: center; }
+    .btn-hide { background: none; border: 1px solid #ccc; border-radius: 4px; padding: 0.15rem 0.4rem;
+                font-size: 0.65rem; color: #888; cursor: pointer; }
+    .btn-hide:hover { background: #f0f0f0; }
+    .card.hidden-card { opacity: 0.5; }
   </style>
 </head>
 <body>
@@ -152,25 +171,90 @@ BOARD_HTML = """
   <button type="submit">Add</button>
 </form>
 
-<div class="board">
-  {% for col_status, col_label in columns %}
-  <div class="col">
-    <h2>{{ col_label }} <span class="count">({{ tasks|selectattr('status','equalto',col_status)|list|length }})</span></h2>
+<div class="toolbar">
+  {% if show_hidden %}
+  <a href="/" class="btn btn-sm" style="background:#e5e7eb;color:#333;font-size:0.75rem">Hide Hidden Tasks</a>
+  {% else %}
+  <a href="/?show_hidden=1" class="btn btn-sm" style="background:#e5e7eb;color:#333;font-size:0.75rem">Show Hidden Tasks</a>
+  {% endif %}
+</div>
+
+{# --- Main pipeline: happy path left-to-right --- #}
+<div class="section-label">Pipeline</div>
+<div class="pipeline">
+  {% for col_status, col_label, col_icon in pipeline_cols %}
+  {% if not loop.first %}<div class="pipe-arrow">&rarr;</div>{% endif %}
+  <div class="col col-{{ col_status }}">
+    <h2>
+      {% if col_icon %}<span class="gate-icon">{{ col_icon }}</span>{% endif %}
+      {{ col_label }}
+      <span class="count">({{ tasks|selectattr('status','equalto',col_status)|list|length }})</span>
+    </h2>
     {% for t in tasks if t.status == col_status %}
-    <div class="card">
-      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:60] }}{% if t.prompt|length > 60 %}...{% endif %}</a>
+    <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
+      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:50] }}{% if t.prompt|length > 50 %}...{% endif %}</a>
       <div class="meta">
         <span class="badge badge-{{ t.get('priority','medium') }}">{{ t.get('priority','medium') }}</span>
-        {% if t.get('parent') %} &middot; subtask of #{{ t.parent }}{% endif %}
-        {% if t.get('created_at') %} &middot; {{ t.created_at[:10] }}{% endif %}
+        {% if t.get('parent') %}<span>&middot; #{{ t.parent }}</span>{% endif %}
+        {% if t.get('pushed_at') %}<span class="pushed-tag">pushed</span>{% endif %}
+        {% if t.get('hidden') %}
+        <form method="post" action="/tasks/{{ t.id }}/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>
+        {% else %}
+        <form method="post" action="/tasks/{{ t.id }}/hide" style="margin:0"><button class="btn-hide">hide</button></form>
+        {% endif %}
       </div>
     </div>
     {% else %}
-    <div style="color:#bbb;font-size:0.8rem">&mdash;</div>
+    <div style="color:#ccc;font-size:0.75rem">&mdash;</div>
     {% endfor %}
   </div>
   {% endfor %}
 </div>
+
+{# --- Off-ramp: stopped & decomposed (always visible) --- #}
+{% set stopped_tasks = tasks|selectattr('status','equalto','stopped')|list %}
+{% set decomposed_tasks = tasks|selectattr('status','equalto','decomposed')|list %}
+<div class="section-label">Off-ramp</div>
+<div class="offramp">
+  <div class="col col-stopped">
+    <h2>Stopped <span class="count">({{ stopped_tasks|length }})</span></h2>
+    {% for t in stopped_tasks %}
+    <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
+      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:50] }}{% if t.prompt|length > 50 %}...{% endif %}</a>
+      <div class="meta">
+        <span class="badge badge-{{ t.get('priority','medium') }}">{{ t.get('priority','medium') }}</span>
+        {% if t.get('stop_reason') %}<span class="reason-tag">{{ t.stop_reason }}</span>{% endif %}
+        {% if t.get('hidden') %}
+        <form method="post" action="/tasks/{{ t.id }}/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>
+        {% else %}
+        <form method="post" action="/tasks/{{ t.id }}/hide" style="margin:0"><button class="btn-hide">hide</button></form>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div style="color:#ccc;font-size:0.75rem">&mdash;</div>
+    {% endfor %}
+  </div>
+  <div class="col col-decomposed">
+    <h2>Decomposed <span class="count">({{ decomposed_tasks|length }})</span></h2>
+    {% for t in decomposed_tasks %}
+    <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
+      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:50] }}{% if t.prompt|length > 50 %}...{% endif %}</a>
+      <div class="meta">
+        <span class="badge badge-{{ t.get('priority','medium') }}">{{ t.get('priority','medium') }}</span>
+        {% if t.get('hidden') %}
+        <form method="post" action="/tasks/{{ t.id }}/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>
+        {% else %}
+        <form method="post" action="/tasks/{{ t.id }}/hide" style="margin:0"><button class="btn-hide">hide</button></form>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div style="color:#ccc;font-size:0.75rem">&mdash;</div>
+    {% endfor %}
+  </div>
+</div>
+
 </body>
 </html>
 """
@@ -210,11 +294,15 @@ DETAIL_HTML = """
 <div class="content">
 <p><a href="/">&larr; Board</a></p>
 <h1>#{{ task.id }} &mdash; {{ task.prompt }}</h1>
-<p>Status: <strong>{{ task.status }}</strong>
+<p>
+  <span class="state-badge state-{{ task.status }}">{{ task.status }}</span>
+  {% if task.get('stop_reason') %}<span class="state-badge state-stopped" style="margin-left:0.3rem">{{ task.stop_reason }}</span>{% endif %}
+  {% if task.get('pushed_at') %}<span class="state-badge state-done" style="margin-left:0.3rem">pushed</span>{% endif %}
    | Priority: {{ task.get('priority','medium') }}
    {% if task.get('parent') %}| Subtask of <a href="/tasks/{{ task.parent }}">#{{ task.parent }}</a>{% endif %}
    {% if task.get('created_at') %}| Created: <span class="timestamp">{{ task.created_at[:19] }}</span>{% endif %}
    {% if task.get('completed_at') %}| Completed: <span class="timestamp">{{ task.completed_at[:19] }}</span>{% endif %}
+   {% if task.get('pushed_at') %}| Pushed: <span class="timestamp">{{ task.pushed_at[:19] }}</span>{% endif %}
 </p>
 
 {% if task.get('rate_limited_at') %}
@@ -270,6 +358,17 @@ DETAIL_HTML = """
   {% if task.status != 'in_progress' %}
   <form method="post" action="/tasks/{{ task.id }}/delete" onsubmit="return confirm('Delete task #{{ task.id }}? This cannot be undone.')">
     <button class="btn btn-delete btn-sm">Delete</button>
+  </form>
+  {% endif %}
+
+  {# Hide / Unhide #}
+  {% if task.get('hidden') %}
+  <form method="post" action="/tasks/{{ task.id }}/unhide">
+    <button class="btn btn-sm" style="background:#6b7280;color:#fff">Unhide</button>
+  </form>
+  {% else %}
+  <form method="post" action="/tasks/{{ task.id }}/hide">
+    <button class="btn btn-sm" style="background:#6b7280;color:#fff">Hide</button>
   </form>
   {% endif %}
 
@@ -411,21 +510,25 @@ LOG_HTML = """
 # Routes
 # ---------------------------------------------------------------------------
 
-BOARD_COLUMNS = [
-    ("pending",      "Pending"),
-    ("in_progress",  "In Progress"),
-    ("plan_review",  "Awaiting Approval"),
-    ("push_review",  "Push Review"),
-    ("decomposed",   "Decomposed"),
-    ("done",         "Done"),
-    ("stopped",      "Stopped"),
+# Pipeline columns: (status, label, icon)
+# Icons mark human-gated states that need your action
+PIPELINE_COLS = [
+    ("pending",      "Pending",    ""),
+    ("in_progress",  "Running",    ""),
+    ("plan_review",  "Review Plan", "\u270b"),
+    ("push_review",  "Review Push", "\u270b"),
+    ("done",         "Done",       ""),
 ]
 
 
 @app.get("/")
 def board():
     data = load_tasks()
-    return render_template_string(BOARD_HTML, tasks=data["tasks"], columns=BOARD_COLUMNS)
+    show_hidden = request.args.get("show_hidden", "0") == "1"
+    tasks = data["tasks"] if show_hidden else [t for t in data["tasks"] if not t.get("hidden")]
+    return render_template_string(
+        BOARD_HTML, tasks=tasks, pipeline_cols=PIPELINE_COLS, show_hidden=show_hidden,
+    )
 
 
 @app.post("/tasks")
@@ -435,21 +538,25 @@ def add_task():
     if not prompt:
         return redirect(url_for("board"))
 
-    data = load_tasks()
-    task = {
-        "id": next_id(data["tasks"]),
-        "status": "pending",
-        "prompt": prompt,
-        "priority": priority,
-        "parent": None,
-        "plan": None,
-        "created_at": datetime.utcnow().isoformat(),
-        "completed_at": None,
-        "summary": None,
-    }
-    data["tasks"].append(task)
-    save_tasks(data)
-    log_progress(task["id"], "created", f"priority={priority}, prompt={prompt[:80]}")
+    new_task = {}
+
+    def mutate(data):
+        task = {
+            "id": next_id(data),
+            "status": "pending",
+            "prompt": prompt,
+            "priority": priority,
+            "parent": None,
+            "plan": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": None,
+            "summary": None,
+        }
+        data["tasks"].append(task)
+        new_task.update(task)
+
+    locked_update(mutate)
+    log_progress(new_task["id"], "created", f"priority={priority}, prompt={prompt[:80]}")
     return redirect(url_for("board"))
 
 
@@ -467,35 +574,39 @@ def task_detail(task_id: int):
 def edit_task(task_id: int):
     prompt = request.form.get("prompt", "").strip()
     priority = request.form.get("priority", "medium")
-    data = load_tasks()
-    for t in data["tasks"]:
-        if t["id"] == task_id and t["status"] in ("pending", "stopped"):
-            if prompt:
-                t["prompt"] = prompt
-            t["priority"] = priority
-            break
-    save_tasks(data)
+
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id and t["status"] in ("pending", "stopped"):
+                if prompt:
+                    t["prompt"] = prompt
+                t["priority"] = priority
+                break
+
+    locked_update(mutate)
     log_progress(task_id, "edited", f"priority={priority}")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
 @app.post("/tasks/<int:task_id>/delete")
 def delete_task(task_id: int):
-    data = load_tasks()
-    data["tasks"] = [t for t in data["tasks"] if t["id"] != task_id or t["status"] == "in_progress"]
-    save_tasks(data)
+    def mutate(data):
+        data["tasks"] = [t for t in data["tasks"] if t["id"] != task_id or t["status"] == "in_progress"]
+
+    locked_update(mutate)
     log_progress(task_id, "deleted")
     return redirect(url_for("board"))
 
 
 @app.post("/tasks/<int:task_id>/approve")
 def approve_task(task_id: int):
-    data = load_tasks()
-    for t in data["tasks"]:
-        if t["id"] == task_id and t["status"] == "plan_review":
-            t["status"] = "in_progress"
-            break
-    save_tasks(data)
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id and t["status"] == "plan_review":
+                t["status"] = "in_progress"
+                break
+
+    locked_update(mutate)
     log_progress(task_id, "plan approved")
     return redirect(url_for("task_detail", task_id=task_id))
 
@@ -503,74 +614,104 @@ def approve_task(task_id: int):
 @app.post("/tasks/<int:task_id>/reject")
 def reject_task(task_id: int):
     feedback = request.form.get("feedback", "")
-    data = load_tasks()
-    for t in data["tasks"]:
-        if t["id"] == task_id and t["status"] == "plan_review":
-            t["status"] = "stopped"
-            t["stop_reason"] = "rejected"
-            if feedback:
-                t["summary"] = f"Rejected: {feedback}"
-            break
-    save_tasks(data)
+
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id and t["status"] == "plan_review":
+                t["status"] = "stopped"
+                t["stop_reason"] = "rejected"
+                if feedback:
+                    t["summary"] = f"Rejected: {feedback}"
+                break
+
+    locked_update(mutate)
     log_progress(task_id, "plan rejected", feedback or "")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
 @app.post("/tasks/<int:task_id>/cancel")
 def cancel_task(task_id: int):
-    data = load_tasks()
-    for t in data["tasks"]:
-        if t["id"] == task_id and t["status"] in ("in_progress", "plan_review"):
-            t["status"] = "stopped"
-            t["stop_reason"] = "cancelled"
-            t["summary"] = (t.get("summary") or "") + "\nCancelled by user via Web UI."
-            break
-    save_tasks(data)
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id and t["status"] in ("in_progress", "plan_review"):
+                t["status"] = "stopped"
+                t["stop_reason"] = "cancelled"
+                t["summary"] = (t.get("summary") or "") + "\nCancelled by user via Web UI."
+                break
+
+    locked_update(mutate)
     log_progress(task_id, "cancelled by user")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
 @app.post("/tasks/<int:task_id>/retry")
 def retry_task(task_id: int):
-    data = load_tasks()
-    for t in data["tasks"]:
-        if t["id"] == task_id and t["status"] in ("stopped", "done"):
-            t["status"] = "pending"
-            t["completed_at"] = None
-            t["summary"] = None
-            t["plan"] = None
-            t.pop("stop_reason", None)
-            t.pop("pushed_at", None)
-            break
-    save_tasks(data)
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id and t["status"] in ("stopped", "done"):
+                t["status"] = "pending"
+                t["completed_at"] = None
+                t["summary"] = None
+                t["plan"] = None
+                t.pop("stop_reason", None)
+                t.pop("pushed_at", None)
+                break
+
+    locked_update(mutate)
     log_progress(task_id, "requeued (retry)")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
 @app.post("/tasks/<int:task_id>/approve-push")
 def approve_push(task_id: int):
-    data = load_tasks()
-    for t in data["tasks"]:
-        if t["id"] == task_id and t["status"] == "push_review":
-            t["status"] = "done"
-            t["pushed_at"] = datetime.utcnow().isoformat()
-            break
-    save_tasks(data)
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id and t["status"] == "push_review":
+                t["status"] = "done"
+                t["pushed_at"] = datetime.now(timezone.utc).isoformat()
+                break
+
+    locked_update(mutate)
     log_progress(task_id, "push approved")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
 @app.post("/tasks/<int:task_id>/reject-push")
 def reject_push(task_id: int):
-    data = load_tasks()
-    for t in data["tasks"]:
-        if t["id"] == task_id and t["status"] == "push_review":
-            t["status"] = "done"
-            t["summary"] = (t.get("summary") or "") + "\nPush skipped by user (local commit only)."
-            break
-    save_tasks(data)
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id and t["status"] == "push_review":
+                t["status"] = "done"
+                t["summary"] = (t.get("summary") or "") + "\nPush skipped by user (local commit only)."
+                break
+
+    locked_update(mutate)
     log_progress(task_id, "push skipped", "local commit only")
     return redirect(url_for("task_detail", task_id=task_id))
+
+
+@app.post("/tasks/<int:task_id>/hide")
+def hide_task(task_id: int):
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id:
+                t["hidden"] = True
+                break
+
+    locked_update(mutate)
+    return redirect(url_for("board"))
+
+
+@app.post("/tasks/<int:task_id>/unhide")
+def unhide_task(task_id: int):
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id:
+                t.pop("hidden", None)
+                break
+
+    locked_update(mutate)
+    return redirect(url_for("board", show_hidden="1"))
 
 
 @app.get("/progress")

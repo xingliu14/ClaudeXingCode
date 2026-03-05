@@ -7,4 +7,15 @@
 {"ts": "2026-02-27 17:36:48", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
 {"ts": "2026-02-27 17:37:16", "task_id": 1, "action": "plan approved", "details": "", "detail_file": null}
 {"ts": "2026-02-27 17:37:18", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
-{"ts": "2026-02-27 17:37:22", "task_id": 1, "action": "completed", "details": "Algorithms hum soft, Code flows through silicon veins — Dreams compiled to light.", "detail_file": null}
+{"ts": "2026-02-27 17:37:22", "task_id": 1, "action": "completed", "details": "Algorithms hum soft, Code flows through silicon veins \u2014 Dreams compiled to light.", "detail_file": null}
+{"ts": "2026-03-04 22:48:09", "task_id": 1, "action": "deleted", "details": "", "detail_file": null}
+{"ts": "2026-03-04 22:48:39", "task_id": 2, "action": "created", "details": "priority=low, prompt=write me a haiku about BBQ", "detail_file": null}
+{"ts": "2026-03-04 22:49:29", "task_id": 2, "action": "started planning", "details": "write me a haiku about BBQ", "detail_file": null}
+{"ts": "2026-03-04 22:49:50", "task_id": 2, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-04 22:54:33", "task_id": 2, "action": "plan rejected", "details": "", "detail_file": null}
+{"ts": "2026-03-04 22:54:38", "task_id": 2, "action": "requeued (retry)", "details": "", "detail_file": null}
+{"ts": "2026-03-04 22:54:44", "task_id": 2, "action": "started planning", "details": "write me a haiku about BBQ", "detail_file": null}
+{"ts": "2026-03-04 22:55:06", "task_id": 2, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-04 22:58:28", "task_id": 2, "action": "plan approved", "details": "", "detail_file": null}
+{"ts": "2026-03-04 23:03:57", "task_id": 2, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-04 23:04:16", "task_id": 2, "action": "completed", "details": "Perfect! I've completed your haiku about BBQ. Here it is:  **Smoke curls through the air**   **Tende... \u2192 task_2_2026-03-04_230416.txt", "detail_file": "task_2_2026-03-04_230416.txt"}
