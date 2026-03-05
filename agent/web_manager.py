@@ -87,7 +87,7 @@ SHARED_CSS = """
 
 HEADER_HTML = """
 <header>
-  <h1>Agent Board</h1>
+  <h1>ClaudeXingCode Dashboard</h1>
   <nav>
     <a href="/">Board</a>
     <a href="/progress">Progress</a>
@@ -115,7 +115,7 @@ BOARD_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Agent Board</title>
+  <title>ClaudeXingCode Dashboard</title>
   <style>
     """ + SHARED_CSS + """
     .board { display: flex; gap: 1rem; padding: 1rem; overflow-x: auto; }
@@ -248,21 +248,21 @@ DETAIL_HTML = """
   {% endif %}
 
   {# Cancel: only for in_progress or plan_review #}
-  {% if task.status in ('in_progress', 'plan_review', 'approved') %}
+  {% if task.status in ('in_progress', 'plan_review') %}
   <form method="post" action="/tasks/{{ task.id }}/cancel" onsubmit="return confirm('Cancel this task?')">
     <button class="btn btn-cancel btn-sm">Cancel</button>
   </form>
   {% endif %}
 
-  {# Retry: only for failed, rejected, or done #}
-  {% if task.status in ('failed', 'rejected', 'done') %}
+  {# Retry: only for stopped or done #}
+  {% if task.status in ('stopped', 'done') %}
   <form method="post" action="/tasks/{{ task.id }}/retry">
     <button class="btn btn-retry btn-sm">Retry / Requeue</button>
   </form>
   {% endif %}
 
-  {# Edit: available for pending, failed, rejected #}
-  {% if task.status in ('pending', 'failed', 'rejected') %}
+  {# Edit: available for pending or stopped #}
+  {% if task.status in ('pending', 'stopped') %}
   <button class="btn btn-edit btn-sm" onclick="document.getElementById('edit-form').style.display='block'">Edit</button>
   {% endif %}
 
@@ -418,7 +418,7 @@ BOARD_COLUMNS = [
     ("push_review",  "Push Review"),
     ("decomposed",   "Decomposed"),
     ("done",         "Done"),
-    ("failed",       "Failed"),
+    ("stopped",      "Stopped"),
 ]
 
 
@@ -469,7 +469,7 @@ def edit_task(task_id: int):
     priority = request.form.get("priority", "medium")
     data = load_tasks()
     for t in data["tasks"]:
-        if t["id"] == task_id and t["status"] in ("pending", "failed", "rejected"):
+        if t["id"] == task_id and t["status"] in ("pending", "stopped"):
             if prompt:
                 t["prompt"] = prompt
             t["priority"] = priority
@@ -493,7 +493,7 @@ def approve_task(task_id: int):
     data = load_tasks()
     for t in data["tasks"]:
         if t["id"] == task_id and t["status"] == "plan_review":
-            t["status"] = "approved"
+            t["status"] = "in_progress"
             break
     save_tasks(data)
     log_progress(task_id, "plan approved")
@@ -506,7 +506,8 @@ def reject_task(task_id: int):
     data = load_tasks()
     for t in data["tasks"]:
         if t["id"] == task_id and t["status"] == "plan_review":
-            t["status"] = "rejected"
+            t["status"] = "stopped"
+            t["stop_reason"] = "rejected"
             if feedback:
                 t["summary"] = f"Rejected: {feedback}"
             break
@@ -519,8 +520,9 @@ def reject_task(task_id: int):
 def cancel_task(task_id: int):
     data = load_tasks()
     for t in data["tasks"]:
-        if t["id"] == task_id and t["status"] in ("in_progress", "plan_review", "approved"):
-            t["status"] = "failed"
+        if t["id"] == task_id and t["status"] in ("in_progress", "plan_review"):
+            t["status"] = "stopped"
+            t["stop_reason"] = "cancelled"
             t["summary"] = (t.get("summary") or "") + "\nCancelled by user via Web UI."
             break
     save_tasks(data)
@@ -532,11 +534,13 @@ def cancel_task(task_id: int):
 def retry_task(task_id: int):
     data = load_tasks()
     for t in data["tasks"]:
-        if t["id"] == task_id and t["status"] in ("failed", "rejected", "done"):
+        if t["id"] == task_id and t["status"] in ("stopped", "done"):
             t["status"] = "pending"
             t["completed_at"] = None
             t["summary"] = None
             t["plan"] = None
+            t.pop("stop_reason", None)
+            t.pop("pushed_at", None)
             break
     save_tasks(data)
     log_progress(task_id, "requeued (retry)")
@@ -548,7 +552,8 @@ def approve_push(task_id: int):
     data = load_tasks()
     for t in data["tasks"]:
         if t["id"] == task_id and t["status"] == "push_review":
-            t["status"] = "pushed"
+            t["status"] = "done"
+            t["pushed_at"] = datetime.utcnow().isoformat()
             break
     save_tasks(data)
     log_progress(task_id, "push approved")

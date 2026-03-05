@@ -37,7 +37,7 @@ def load_env_file(path: str = "/agent/.env") -> None:
 def build_body(tasks: list, today: str) -> str:
     done    = [t for t in tasks if t["status"] == "done"    and (t.get("completed_at") or "").startswith(today)]
     pending = [t for t in tasks if t["status"] == "pending"]
-    failed  = [t for t in tasks if t["status"] == "failed"  and (t.get("completed_at") or (t.get("created_at") or "")).startswith(today)]
+    failed  = [t for t in tasks if t["status"] == "stopped"  and (t.get("completed_at") or (t.get("created_at") or "")).startswith(today)]
 
     lines = []
 

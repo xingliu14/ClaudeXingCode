@@ -148,7 +148,7 @@ class TestTasksCompletedToday:
 
         today = date.today().isoformat()
         tasks = [
-            {"id": 1, "status": "failed", "completed_at": f"{today}T10:00:00"},
+            {"id": 1, "status": "stopped", "completed_at": f"{today}T10:00:00"},
         ]
         assert tasks_completed_today(tasks) == 0
 
@@ -194,10 +194,10 @@ class TestWaitForApproval:
         import dispatcher
 
         tf = tmp_path / "tasks.json"
-        # Start with plan_review, then switch to approved on second load
+        # Start with plan_review, then switch to in_progress (approved) on second load
         states = [
             {"tasks": [{"id": 1, "status": "plan_review"}]},
-            {"tasks": [{"id": 1, "status": "approved"}]},
+            {"tasks": [{"id": 1, "status": "in_progress"}]},
         ]
         call_count = {"n": 0}
 
@@ -212,11 +212,11 @@ class TestWaitForApproval:
 
         assert dispatcher.wait_for_approval({"id": 1}) is True
 
-    def test_returns_false_on_rejected(self, tmp_path, monkeypatch):
+    def test_returns_false_on_stopped(self, tmp_path, monkeypatch):
         import dispatcher
 
         def fake_load():
-            return {"tasks": [{"id": 1, "status": "rejected"}]}
+            return {"tasks": [{"id": 1, "status": "stopped"}]}
 
         monkeypatch.setattr(dispatcher, "load_tasks", fake_load)
         monkeypatch.setattr("time.sleep", lambda _: None)
@@ -398,7 +398,7 @@ class TestApproveRoute:
         assert resp.status_code == 302
 
         result = json.loads(tf.read_text())
-        assert result["tasks"][0]["status"] == "approved"
+        assert result["tasks"][0]["status"] == "in_progress"
 
     def test_does_not_approve_non_plan_review(self, web_client):
         client, tf = web_client
@@ -423,7 +423,8 @@ class TestRejectRoute:
         assert resp.status_code == 302
 
         result = json.loads(tf.read_text())
-        assert result["tasks"][0]["status"] == "rejected"
+        assert result["tasks"][0]["status"] == "stopped"
+        assert result["tasks"][0]["stop_reason"] == "rejected"
         assert result["tasks"][0]["summary"] == "Rejected: Bad plan"
 
     def test_rejects_without_feedback(self, web_client):
@@ -435,8 +436,8 @@ class TestRejectRoute:
         client.post("/tasks/1/reject", data={"feedback": ""})
 
         result = json.loads(tf.read_text())
-        assert result["tasks"][0]["status"] == "rejected"
-        assert "summary" not in result["tasks"][0] or result["tasks"][0].get("summary") is None or result["tasks"][0].get("summary") == ""
+        assert result["tasks"][0]["status"] == "stopped"
+        assert result["tasks"][0]["stop_reason"] == "rejected"
 
 
 # ============================================================================
@@ -485,7 +486,7 @@ class TestBuildBody:
         tasks = [
             {"id": 1, "status": "done", "prompt": "Task A", "completed_at": f"{today}T10:00:00"},
             {"id": 2, "status": "pending", "prompt": "Task B"},
-            {"id": 3, "status": "failed", "prompt": "Task C", "created_at": f"{today}T08:00:00"},
+            {"id": 3, "status": "stopped", "prompt": "Task C", "created_at": f"{today}T08:00:00"},
         ]
         body = build_body(tasks, today)
 

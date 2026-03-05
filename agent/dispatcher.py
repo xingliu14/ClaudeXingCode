@@ -143,15 +143,16 @@ def wait_for_approval(task: dict) -> bool:
         current = next((t for t in data["tasks"] if t["id"] == task_id), None)
         if current is None:
             return False
-        if current["status"] == "approved":
+        if current["status"] == "in_progress":
             return True
-        if current["status"] == "rejected":
+        if current["status"] == "stopped":
             return False
         time.sleep(10)
 
     # Timed out — auto-reject
-    update_task(task_id, status="failed", summary="Plan approval timed out",
-                progress_action="failed", progress_details="plan approval timed out")
+    update_task(task_id, status="stopped", stop_reason="timeout",
+                summary="Plan approval timed out",
+                progress_action="stopped", progress_details="plan approval timed out")
     return False
 
 
@@ -215,8 +216,9 @@ def main() -> None:
         try:
             _, plan_output = run_cc(task["prompt"], mode="plan")
         except subprocess.TimeoutExpired:
-            update_task(task_id, status="failed", summary="Plan step timed out",
-                        progress_action="failed", progress_details="plan step timed out")
+            update_task(task_id, status="stopped", stop_reason="timeout",
+                        summary="Plan step timed out",
+                        progress_action="stopped", progress_details="plan step timed out")
             continue
 
         update_task(task_id, status="plan_review", plan=plan_output,
@@ -224,8 +226,9 @@ def main() -> None:
 
         approved = wait_for_approval(task)
         if not approved:
-            update_task(task_id, status="failed", summary="Plan rejected or timed out",
-                        progress_action="failed", progress_details="plan rejected or timed out")
+            update_task(task_id, status="stopped", stop_reason="rejected",
+                        summary="Plan rejected or timed out",
+                        progress_action="stopped", progress_details="plan rejected or timed out")
             continue
 
         # --- Phase B: Execute ---
@@ -234,8 +237,9 @@ def main() -> None:
         try:
             _, exec_output = run_cc(task["prompt"], mode="execute")
         except subprocess.TimeoutExpired:
-            update_task(task_id, status="failed", summary="Execution timed out",
-                        progress_action="failed", progress_details="execution timed out")
+            update_task(task_id, status="stopped", stop_reason="timeout",
+                        summary="Execution timed out",
+                        progress_action="stopped", progress_details="execution timed out")
             continue
 
         if detect_decomposition(task_id):
