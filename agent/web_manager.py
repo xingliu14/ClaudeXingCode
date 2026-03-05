@@ -255,6 +255,98 @@ BOARD_HTML = """
   </div>
 </div>
 
+<script>
+(function() {
+  const POLL_MS = 3000;
+  const PIPELINE_COLS = {{ pipeline_cols_json|safe }};
+  const showHidden = {{ 'true' if show_hidden else 'false' }};
+
+  function esc(s) {
+    const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+  }
+
+  function renderCard(t) {
+    const cls = t.hidden ? ' hidden-card' : '';
+    const prompt = t.prompt.length > 50 ? esc(t.prompt.slice(0,50)) + '...' : esc(t.prompt);
+    const prio = t.priority || 'medium';
+    let meta = '<span class="badge badge-' + prio + '">' + prio + '</span>';
+    if (t.parent) meta += '<span>&middot; #' + t.parent + '</span>';
+    if (t.pushed_at) meta += '<span class="pushed-tag">pushed</span>';
+    if (t.stop_reason) meta += '<span class="reason-tag">' + esc(t.stop_reason) + '</span>';
+    const hideAction = t.hidden
+      ? '<form method="post" action="/tasks/' + t.id + '/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>'
+      : '<form method="post" action="/tasks/' + t.id + '/hide" style="margin:0"><button class="btn-hide">hide</button></form>';
+    meta += hideAction;
+    return '<div class="card' + cls + '"><a href="/tasks/' + t.id + '">#' + t.id + ' ' + prompt + '</a><div class="meta">' + meta + '</div></div>';
+  }
+
+  function renderCol(tasks, status) {
+    const items = tasks.filter(t => t.status === status);
+    if (items.length === 0) return '<div style="color:#ccc;font-size:0.75rem">&mdash;</div>';
+    return items.map(renderCard).join('');
+  }
+
+  function updateBoard(data) {
+    const tasks = showHidden ? data.tasks : data.tasks.filter(t => !t.hidden);
+
+    // Update pipeline columns
+    const pipeline = document.querySelector('.pipeline');
+    if (pipeline) {
+      const cols = pipeline.querySelectorAll('.col');
+      PIPELINE_COLS.forEach(function(colDef, i) {
+        const status = colDef[0];
+        const count = tasks.filter(t => t.status === status).length;
+        if (cols[i]) {
+          const h2 = cols[i].querySelector('h2');
+          if (h2) {
+            const countSpan = h2.querySelector('.count');
+            if (countSpan) countSpan.textContent = '(' + count + ')';
+          }
+          // Replace cards
+          const existingCards = cols[i].querySelectorAll('.card, div[style]');
+          existingCards.forEach(el => { if (!el.matches('h2')) el.remove(); });
+          // Remove all children except h2
+          while (cols[i].children.length > 1) cols[i].removeChild(cols[i].lastChild);
+          cols[i].insertAdjacentHTML('beforeend', renderCol(tasks, status));
+        }
+      });
+    }
+
+    // Update off-ramp columns
+    const offramp = document.querySelector('.offramp');
+    if (offramp) {
+      const offCols = offramp.querySelectorAll('.col');
+      ['stopped', 'decomposed'].forEach(function(status, i) {
+        const items = tasks.filter(t => t.status === status);
+        if (offCols[i]) {
+          const h2 = offCols[i].querySelector('h2');
+          if (h2) {
+            const countSpan = h2.querySelector('.count');
+            if (countSpan) countSpan.textContent = '(' + items.length + ')';
+          }
+          while (offCols[i].children.length > 1) offCols[i].removeChild(offCols[i].lastChild);
+          offCols[i].insertAdjacentHTML('beforeend', renderCol(tasks, status));
+        }
+      });
+    }
+
+    // Update dispatcher status
+    const d = data.dispatcher;
+    const el = document.getElementById('dispatcher-status');
+    if (el && d) {
+      const dot = d.state || 'idle';
+      const label = d.label || dot;
+      el.innerHTML = '<span class="status-dot status-' + dot + '"></span><span style="color:#ccc;font-size:0.8rem">' + esc(label) + '</span>';
+    }
+  }
+
+  function poll() {
+    fetch('/api/tasks').then(r => r.json()).then(updateBoard).catch(() => {});
+    setTimeout(poll, POLL_MS);
+  }
+  setTimeout(poll, POLL_MS);
+})();
+</script>
 </body>
 </html>
 """
@@ -443,6 +535,34 @@ DETAIL_HTML = """
 {% endif %}
 
 </div>
+<script>
+(function() {
+  const POLL_MS = 3000;
+  const TASK_ID = {{ task.id }};
+  let lastStatus = '{{ task.status }}';
+
+  function poll() {
+    fetch('/api/tasks').then(r => r.json()).then(function(data) {
+      const task = data.tasks.find(t => t.id === TASK_ID);
+      if (task && task.status !== lastStatus) {
+        // Status changed — reload the page to get fresh server-rendered content
+        location.reload();
+        return;
+      }
+      // Update dispatcher status in header
+      const d = data.dispatcher;
+      const el = document.getElementById('dispatcher-status');
+      if (el && d) {
+        const dot = d.state || 'idle';
+        const label = d.label || dot;
+        el.innerHTML = '<span class="status-dot status-' + dot + '"></span><span style="color:#ccc;font-size:0.8rem">' + label + '</span>';
+      }
+    }).catch(() => {});
+    setTimeout(poll, POLL_MS);
+  }
+  setTimeout(poll, POLL_MS);
+})();
+</script>
 </body>
 </html>
 """
@@ -528,6 +648,7 @@ def board():
     tasks = data["tasks"] if show_hidden else [t for t in data["tasks"] if not t.get("hidden")]
     return render_template_string(
         BOARD_HTML, tasks=tasks, pipeline_cols=PIPELINE_COLS, show_hidden=show_hidden,
+        pipeline_cols_json=json.dumps(PIPELINE_COLS),
     )
 
 
@@ -736,6 +857,20 @@ def git_log():
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
     return render_template_string(LOG_HTML, log_output=log_output)
+
+
+@app.get("/api/tasks")
+def api_tasks():
+    """Return all tasks as JSON for live polling."""
+    data = load_tasks()
+    status_file = TASKS_FILE.parent / "dispatcher_status.json"
+    dispatcher = {"state": "idle", "label": "Idle"}
+    if status_file.exists():
+        try:
+            dispatcher = json.loads(status_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return jsonify({"tasks": data["tasks"], "dispatcher": dispatcher})
 
 
 @app.get("/status")

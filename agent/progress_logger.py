@@ -46,7 +46,10 @@ def log_progress(task_id: int | None, action: str, details: str = "") -> None:
     detail_file = None
     short_details = details
 
-    # If details are long, write to a separate file
+    # If details are long, write to a separate file.
+    # A single task may produce multiple txt files — one per log_progress call
+    # whose details exceed MAX_INLINE_LEN. Each file is written once and never
+    # read back by the system; they exist purely for human reference.
     if details and len(details) > MAX_INLINE_LEN:
         DETAILS_DIR.mkdir(exist_ok=True)
         safe_ts = ts.replace(" ", "_").replace(":", "")

@@ -162,7 +162,7 @@ def wait_for_approval(task: dict) -> bool:
             return True
         if current["status"] == "stopped":
             return False
-        time.sleep(10)
+        time.sleep(60)
 
     # Timed out — auto-reject
     update_task(task_id, status="stopped", stop_reason="timeout",
