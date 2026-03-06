@@ -113,9 +113,7 @@ BOARD_HTML = """
     /* --- Pipeline section --- */
     .section-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
                      color: #999; padding: 0.75rem 1rem 0; font-weight: 600; }
-    .pipeline { display: flex; gap: 0; padding: 0 1rem 0.5rem; overflow-x: auto; align-items: stretch; }
-    .pipe-arrow { display: flex; align-items: center; color: #cbd5e1; font-size: 1.2rem;
-                  padding: 0 0.15rem; user-select: none; margin-top: 1.8rem; }
+    .pipeline { display: flex; gap: 0.75rem; padding: 0 1rem 0.5rem; overflow-x: auto; align-items: stretch; }
     .col { background: #fff; border-radius: 8px; min-width: 180px; flex: 1;
            padding: 0.6rem; border-top: 3px solid #e5e7eb; }
     .col-pending     { border-top-color: #818cf8; }
@@ -190,7 +188,6 @@ BOARD_HTML = """
 <div class="section-label">Pipeline</div>
 <div class="pipeline">
   {% for col_status, col_label, col_icon in pipeline_cols %}
-  {% if not loop.first %}<div class="pipe-arrow">&rarr;</div>{% endif %}
   <div class="col col-{{ col_status }}">
     <h2>
       {% if col_icon %}<span class="gate-icon">{{ col_icon }}</span>{% endif %}
@@ -202,7 +199,8 @@ BOARD_HTML = """
       <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:50] }}{% if t.prompt|length > 50 %}...{% endif %}</a>
       <div class="meta">
         <span class="badge badge-{{ t.get('priority','medium') }}">{{ t.get('priority','medium') }}</span>
-        <span class="badge badge-model">{{ t.get('model','sonnet') }}</span>
+        <span class="badge badge-model">P:{{ t.get('plan_model', t.get('model','sonnet')) }}</span>
+        <span class="badge badge-model">E:{{ t.get('exec_model', t.get('model','sonnet')) }}</span>
         {% if t.get('parent') %}<span>&middot; #{{ t.parent }}</span>{% endif %}
         {% if t.get('pushed_at') %}<span class="pushed-tag">pushed</span>{% endif %}
         {% if t.get('hidden') %}
@@ -277,9 +275,11 @@ BOARD_HTML = """
     const cls = t.hidden ? ' hidden-card' : '';
     const prompt = t.prompt.length > 50 ? esc(t.prompt.slice(0,50)) + '...' : esc(t.prompt);
     const prio = t.priority || 'medium';
-    const model = t.model || 'sonnet';
+    const planModel = t.plan_model || t.model || 'sonnet';
+    const execModel = t.exec_model || t.model || 'sonnet';
     let meta = '<span class="badge badge-' + prio + '">' + prio + '</span>';
-    meta += '<span class="badge badge-model">' + model + '</span>';
+    meta += '<span class="badge badge-model">P:' + planModel + '</span>';
+    meta += '<span class="badge badge-model">E:' + execModel + '</span>';
     if (t.parent) meta += '<span>&middot; #' + t.parent + '</span>';
     if (t.pushed_at) meta += '<span class="pushed-tag">pushed</span>';
     if (t.stop_reason) meta += '<span class="reason-tag">' + esc(t.stop_reason) + '</span>';
@@ -401,7 +401,21 @@ DETAIL_HTML = """
   {% if task.get('stop_reason') %}<span class="state-badge state-stopped" style="margin-left:0.3rem">{{ task.stop_reason }}</span>{% endif %}
   {% if task.get('pushed_at') %}<span class="state-badge state-done" style="margin-left:0.3rem">pushed</span>{% endif %}
    | Priority: {{ task.get('priority','medium') }}
-   | Model: {{ task.get('model','sonnet') }}
+   |
+   {% set pm = task.get('plan_model', task.get('model','sonnet')) %}
+   {% set em = task.get('exec_model', task.get('model','sonnet')) %}
+   <form method="post" action="/tasks/{{ task.id }}/set-model" style="display:inline">
+     Plan: <select name="plan_model" onchange="this.form.submit()" style="padding:0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.85rem">
+       <option value="sonnet" {% if pm=='sonnet' %}selected{% endif %}>Sonnet</option>
+       <option value="opus" {% if pm=='opus' %}selected{% endif %}>Opus</option>
+       <option value="haiku" {% if pm=='haiku' %}selected{% endif %}>Haiku</option>
+     </select>
+     Exec: <select name="exec_model" onchange="this.form.submit()" style="padding:0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.85rem">
+       <option value="sonnet" {% if em=='sonnet' %}selected{% endif %}>Sonnet</option>
+       <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
+       <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
+     </select>
+   </form>
    {% if task.get('parent') %}| Subtask of <a href="/tasks/{{ task.parent }}">#{{ task.parent }}</a>{% endif %}
    {% if task.get('created_at') %}| Created: <span class="timestamp">{{ task.created_at[:19] }}</span>{% endif %}
    {% if task.get('completed_at') %}| Completed: <span class="timestamp">{{ task.completed_at[:19] }}</span>{% endif %}
@@ -452,8 +466,8 @@ DETAIL_HTML = """
   </form>
   {% endif %}
 
-  {# Edit: available for pending or stopped #}
-  {% if task.status in ('pending', 'stopped') %}
+  {# Edit: available for any status except in_progress #}
+  {% if task.status != 'in_progress' %}
   <button class="btn btn-edit btn-sm" onclick="document.getElementById('edit-form').style.display='block'">Edit</button>
   {% endif %}
 
@@ -489,11 +503,19 @@ DETAIL_HTML = """
         <option value="medium" {% if task.get('priority','medium')=='medium' %}selected{% endif %}>Medium</option>
         <option value="low" {% if task.get('priority')=='low' %}selected{% endif %}>Low</option>
       </select>
-      <label>Model:</label>
-      <select name="model">
-        <option value="sonnet" {% if task.get('model','sonnet')=='sonnet' %}selected{% endif %}>Sonnet</option>
-        <option value="opus" {% if task.get('model','sonnet')=='opus' %}selected{% endif %}>Opus</option>
-        <option value="haiku" {% if task.get('model','sonnet')=='haiku' %}selected{% endif %}>Haiku</option>
+      <label>Plan:</label>
+      <select name="plan_model">
+        {% set pm = task.get('plan_model', task.get('model','sonnet')) %}
+        <option value="sonnet" {% if pm=='sonnet' %}selected{% endif %}>Sonnet</option>
+        <option value="opus" {% if pm=='opus' %}selected{% endif %}>Opus</option>
+        <option value="haiku" {% if pm=='haiku' %}selected{% endif %}>Haiku</option>
+      </select>
+      <label>Exec:</label>
+      <select name="exec_model">
+        {% set em = task.get('exec_model', task.get('model','sonnet')) %}
+        <option value="sonnet" {% if em=='sonnet' %}selected{% endif %}>Sonnet</option>
+        <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
+        <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
       </select>
       <button class="btn btn-edit" type="submit">Save</button>
       <button class="btn" type="button" onclick="document.getElementById('edit-form').style.display='none'" style="background:#e5e7eb;color:#333">Cancel</button>
@@ -687,7 +709,8 @@ def add_task():
             "status": "pending",
             "prompt": prompt,
             "priority": priority,
-            "model": model,
+            "plan_model": model,
+            "exec_model": model,
             "parent": None,
             "plan": None,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -716,21 +739,44 @@ def task_detail(task_id: int):
 def edit_task(task_id: int):
     prompt = request.form.get("prompt", "").strip()
     priority = request.form.get("priority", "medium")
-    model = request.form.get("model", "sonnet")
-    if model not in ("sonnet", "opus", "haiku"):
-        model = "sonnet"
+    plan_model = request.form.get("plan_model", "sonnet")
+    exec_model = request.form.get("exec_model", "sonnet")
+    if plan_model not in ("sonnet", "opus", "haiku"):
+        plan_model = "sonnet"
+    if exec_model not in ("sonnet", "opus", "haiku"):
+        exec_model = "sonnet"
 
     def mutate(data):
         for t in data["tasks"]:
-            if t["id"] == task_id and t["status"] in ("pending", "stopped"):
+            if t["id"] == task_id and t["status"] != "in_progress":
                 if prompt:
                     t["prompt"] = prompt
                 t["priority"] = priority
-                t["model"] = model
+                t["plan_model"] = plan_model
+                t["exec_model"] = exec_model
                 break
 
     locked_update(mutate)
-    log_progress(task_id, "edited", f"priority={priority}, model={model}")
+    log_progress(task_id, "edited", f"priority={priority}, plan={plan_model}, exec={exec_model}")
+    return redirect(url_for("task_detail", task_id=task_id))
+
+
+@app.post("/tasks/<int:task_id>/set-model")
+def set_model(task_id: int):
+    plan_model = request.form.get("plan_model", "")
+    exec_model = request.form.get("exec_model", "")
+    valid = ("sonnet", "opus", "haiku")
+
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id:
+                if plan_model in valid:
+                    t["plan_model"] = plan_model
+                if exec_model in valid:
+                    t["exec_model"] = exec_model
+                break
+
+    locked_update(mutate)
     return redirect(url_for("task_detail", task_id=task_id))
 
 

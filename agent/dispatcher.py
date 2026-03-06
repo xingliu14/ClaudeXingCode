@@ -298,7 +298,8 @@ def plan_task(task: dict) -> None:
                 progress_action="started planning",
                 progress_details=task["prompt"][:80])
     try:
-        _, plan_output = run_cc_local(task["prompt"], model=task.get("model", DEFAULT_MODEL))
+        plan_model = task.get("plan_model") or task.get("model", DEFAULT_MODEL)
+        _, plan_output = run_cc_local(task["prompt"], model=plan_model)
     except subprocess.TimeoutExpired:
         update_task(task_id, status="stopped", stop_reason="timeout",
                     summary="Plan step timed out",
@@ -328,7 +329,8 @@ def execute_task(task: dict) -> None:
     update_task(task_id, status="in_progress",
                 progress_action="started execution")
     try:
-        _, exec_output = run_cc_docker(task["prompt"], model=task.get("model", DEFAULT_MODEL))
+        exec_model = task.get("exec_model") or task.get("model", DEFAULT_MODEL)
+        _, exec_output = run_cc_docker(task["prompt"], model=exec_model)
     except subprocess.TimeoutExpired:
         update_task(task_id, status="stopped", stop_reason="timeout",
                     summary="Execution timed out",

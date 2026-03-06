@@ -288,6 +288,100 @@ class TestRunCC:
 
 
 
+class TestPlanTaskModel:
+    def test_uses_plan_model(self, tmp_path, monkeypatch):
+        import dispatcher
+        import task_store
+
+        tf = tmp_path / "tasks.json"
+        task = {"id": 1, "status": "pending", "prompt": "test",
+                "plan_model": "opus", "exec_model": "haiku", "priority": "medium"}
+        write_tasks(tf, {"tasks": [task]})
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "STATUS_FILE", tmp_path / "status.json")
+
+        mock_run = MagicMock(return_value=MagicMock(
+            returncode=0, stdout='{"type":"result","result":"plan"}', stderr=""
+        ))
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        dispatcher.plan_task(task)
+
+        cmd = mock_run.call_args[0][0]
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "claude-opus-4-6"
+
+    def test_falls_back_to_legacy_model(self, tmp_path, monkeypatch):
+        import dispatcher
+        import task_store
+
+        tf = tmp_path / "tasks.json"
+        task = {"id": 1, "status": "pending", "prompt": "test",
+                "model": "haiku", "priority": "medium"}
+        write_tasks(tf, {"tasks": [task]})
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "STATUS_FILE", tmp_path / "status.json")
+
+        mock_run = MagicMock(return_value=MagicMock(
+            returncode=0, stdout='{"type":"result","result":"plan"}', stderr=""
+        ))
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        dispatcher.plan_task(task)
+
+        cmd = mock_run.call_args[0][0]
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "claude-haiku-4-5-20251001"
+
+
+class TestExecuteTaskModel:
+    def test_uses_exec_model(self, tmp_path, monkeypatch):
+        import dispatcher
+        import task_store
+
+        tf = tmp_path / "tasks.json"
+        task = {"id": 1, "status": "in_progress", "prompt": "test",
+                "plan_model": "sonnet", "exec_model": "opus",
+                "plan": "the plan", "priority": "medium"}
+        write_tasks(tf, {"tasks": [task]})
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "STATUS_FILE", tmp_path / "status.json")
+
+        mock_run = MagicMock(return_value=MagicMock(
+            returncode=0, stdout='{"type":"result","result":"done"}', stderr=""
+        ))
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        dispatcher.execute_task(task)
+
+        # First call is docker run (execution), subsequent calls are git commit
+        cmd = mock_run.call_args_list[0][0][0]
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "claude-opus-4-6"
+
+    def test_falls_back_to_legacy_model(self, tmp_path, monkeypatch):
+        import dispatcher
+        import task_store
+
+        tf = tmp_path / "tasks.json"
+        task = {"id": 1, "status": "in_progress", "prompt": "test",
+                "model": "opus", "plan": "the plan", "priority": "medium"}
+        write_tasks(tf, {"tasks": [task]})
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "STATUS_FILE", tmp_path / "status.json")
+
+        mock_run = MagicMock(return_value=MagicMock(
+            returncode=0, stdout='{"type":"result","result":"done"}', stderr=""
+        ))
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        dispatcher.execute_task(task)
+
+        cmd = mock_run.call_args_list[0][0][0]
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "claude-opus-4-6"
+
+
 class TestGitCommit:
     def test_runs_in_docker(self, monkeypatch):
         import dispatcher
@@ -428,7 +522,8 @@ class TestAddTaskRoute:
         assert task["prompt"] == "Fix the bug"
         assert task["priority"] == "high"
         assert task["status"] == "pending"
-        assert task["model"] == "sonnet"  # default model
+        assert task["plan_model"] == "sonnet"  # default model
+        assert task["exec_model"] == "sonnet"
 
     def test_creates_task_with_model(self, web_client):
         client, tf = web_client
@@ -437,7 +532,8 @@ class TestAddTaskRoute:
 
         data = json.loads(tf.read_text())
         task = data["tasks"][0]
-        assert task["model"] == "opus"
+        assert task["plan_model"] == "opus"
+        assert task["exec_model"] == "opus"
 
     def test_invalid_model_defaults_to_sonnet(self, web_client):
         client, tf = web_client
@@ -446,7 +542,8 @@ class TestAddTaskRoute:
 
         data = json.loads(tf.read_text())
         task = data["tasks"][0]
-        assert task["model"] == "sonnet"
+        assert task["plan_model"] == "sonnet"
+        assert task["exec_model"] == "sonnet"
 
     def test_empty_prompt_no_task(self, web_client):
         client, tf = web_client
@@ -582,6 +679,124 @@ class TestDeleteRoute:
 
         result = json.loads(tf.read_text())
         assert len(result["tasks"]) == 1
+
+
+class TestSetModelRoute:
+    def test_changes_plan_model(self, web_client):
+        client, tf = web_client
+        data = {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                           "priority": "medium", "plan_model": "sonnet",
+                           "exec_model": "sonnet"}]}
+        write_tasks(tf, data)
+
+        resp = client.post("/tasks/1/set-model", data={
+            "plan_model": "opus", "exec_model": "sonnet"
+        })
+        assert resp.status_code == 302
+
+        result = json.loads(tf.read_text())
+        assert result["tasks"][0]["plan_model"] == "opus"
+        assert result["tasks"][0]["exec_model"] == "sonnet"
+
+    def test_changes_exec_model(self, web_client):
+        client, tf = web_client
+        data = {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                           "priority": "medium", "plan_model": "sonnet",
+                           "exec_model": "sonnet"}]}
+        write_tasks(tf, data)
+
+        resp = client.post("/tasks/1/set-model", data={
+            "plan_model": "sonnet", "exec_model": "opus"
+        })
+        assert resp.status_code == 302
+
+        result = json.loads(tf.read_text())
+        assert result["tasks"][0]["plan_model"] == "sonnet"
+        assert result["tasks"][0]["exec_model"] == "opus"
+
+    def test_changes_both_models(self, web_client):
+        client, tf = web_client
+        data = {"tasks": [{"id": 1, "status": "pending", "prompt": "x",
+                           "priority": "medium", "plan_model": "sonnet",
+                           "exec_model": "sonnet"}]}
+        write_tasks(tf, data)
+
+        resp = client.post("/tasks/1/set-model", data={
+            "plan_model": "haiku", "exec_model": "opus"
+        })
+        assert resp.status_code == 302
+
+        result = json.loads(tf.read_text())
+        assert result["tasks"][0]["plan_model"] == "haiku"
+        assert result["tasks"][0]["exec_model"] == "opus"
+
+    def test_ignores_invalid_model(self, web_client):
+        client, tf = web_client
+        data = {"tasks": [{"id": 1, "status": "pending", "prompt": "x",
+                           "priority": "medium", "plan_model": "sonnet",
+                           "exec_model": "sonnet"}]}
+        write_tasks(tf, data)
+
+        client.post("/tasks/1/set-model", data={
+            "plan_model": "gpt4", "exec_model": "gpt4"
+        })
+
+        result = json.loads(tf.read_text())
+        assert result["tasks"][0]["plan_model"] == "sonnet"
+        assert result["tasks"][0]["exec_model"] == "sonnet"
+
+    def test_works_on_any_status(self, web_client):
+        """Model can be changed even on done/stopped tasks."""
+        client, tf = web_client
+        for status in ("pending", "plan_review", "done", "stopped"):
+            data = {"tasks": [{"id": 1, "status": status, "prompt": "x",
+                               "plan_model": "sonnet", "exec_model": "sonnet"}]}
+            write_tasks(tf, data)
+
+            client.post("/tasks/1/set-model", data={
+                "plan_model": "opus", "exec_model": "haiku"
+            })
+
+            result = json.loads(tf.read_text())
+            assert result["tasks"][0]["plan_model"] == "opus"
+            assert result["tasks"][0]["exec_model"] == "haiku"
+
+
+class TestEditTaskModels:
+    def test_edit_updates_both_models(self, web_client):
+        client, tf = web_client
+        data = {"tasks": [{"id": 1, "status": "pending", "prompt": "x",
+                           "priority": "medium", "plan_model": "sonnet",
+                           "exec_model": "sonnet"}]}
+        write_tasks(tf, data)
+
+        client.post("/tasks/1/edit", data={
+            "prompt": "updated", "priority": "high",
+            "plan_model": "opus", "exec_model": "haiku"
+        })
+
+        result = json.loads(tf.read_text())
+        task = result["tasks"][0]
+        assert task["plan_model"] == "opus"
+        assert task["exec_model"] == "haiku"
+        assert task["priority"] == "high"
+
+    def test_edit_blocked_for_in_progress(self, web_client):
+        client, tf = web_client
+        data = {"tasks": [{"id": 1, "status": "in_progress", "prompt": "x",
+                           "priority": "medium", "plan_model": "sonnet",
+                           "exec_model": "sonnet"}]}
+        write_tasks(tf, data)
+
+        client.post("/tasks/1/edit", data={
+            "prompt": "updated", "priority": "high",
+            "plan_model": "opus", "exec_model": "opus"
+        })
+
+        result = json.loads(tf.read_text())
+        task = result["tasks"][0]
+        assert task["plan_model"] == "sonnet"  # unchanged
+        assert task["exec_model"] == "sonnet"
 
 
 class TestStatusRoute:
