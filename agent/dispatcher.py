@@ -317,9 +317,14 @@ def plan_task(task: dict) -> None:
         time.sleep(TOKEN_BACKOFF_SECONDS)
         return
 
-    update_task(task_id, status="plan_review", plan=plan_output,
-                progress_action="plan ready for review")
-    print(f"[dispatcher] Task #{task_id} plan ready for review.", flush=True)
+    if task.get("auto_approve"):
+        update_task(task_id, status="in_progress", plan=plan_output,
+                    progress_action="plan auto-approved")
+        print(f"[dispatcher] Task #{task_id} plan auto-approved.", flush=True)
+    else:
+        update_task(task_id, status="plan_review", plan=plan_output,
+                    progress_action="plan ready for review")
+        print(f"[dispatcher] Task #{task_id} plan ready for review.", flush=True)
 
 
 def execute_task(task: dict) -> None:

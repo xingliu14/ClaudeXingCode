@@ -138,6 +138,7 @@ BOARD_HTML = """
     .badge-medium { background: #fef9c3; color: #92400e; }
     .badge-low { background: #dcfce7; color: #166534; }
     .badge-model { background: #e0e7ff; color: #3730a3; }
+    .badge-auto { background: #d1fae5; color: #065f46; }
     .reason-tag { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
                   font-size: 0.65rem; font-weight: 600; background: #fecaca; color: #991b1b; }
     .pushed-tag { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
@@ -156,6 +157,9 @@ BOARD_HTML = """
                 font-size: 0.65rem; color: #888; cursor: pointer; }
     .btn-hide:hover { background: #f0f0f0; }
     .card.hidden-card { opacity: 0.5; }
+    .prio-sel-high { background: #fee2e2 !important; color: #b91c1c !important; }
+    .prio-sel-medium { background: #fef9c3 !important; color: #92400e !important; }
+    .prio-sel-low { background: #dcfce7 !important; color: #166534 !important; }
   </style>
 </head>
 <body>
@@ -173,6 +177,9 @@ BOARD_HTML = """
     <option value="opus">Opus</option>
     <option value="haiku">Haiku</option>
   </select>
+  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem;cursor:pointer">
+    <input type="checkbox" name="auto_approve" value="1"> Auto-approve
+  </label>
   <button type="submit">Add</button>
 </form>
 
@@ -198,9 +205,16 @@ BOARD_HTML = """
     <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
       <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:50] }}{% if t.prompt|length > 50 %}...{% endif %}</a>
       <div class="meta">
-        <span class="badge badge-{{ t.get('priority','medium') }}">{{ t.get('priority','medium') }}</span>
+        <form method="post" action="/tasks/{{ t.id }}/set-priority" style="margin:0;display:inline">
+          <select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-{{ t.get('priority','medium') }}" style="padding:0.1rem 0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.65rem;font-weight:600;cursor:pointer">
+            <option value="high" {% if t.get('priority')=='high' %}selected{% endif %}>high</option>
+            <option value="medium" {% if t.get('priority','medium')=='medium' %}selected{% endif %}>medium</option>
+            <option value="low" {% if t.get('priority')=='low' %}selected{% endif %}>low</option>
+          </select>
+        </form>
         <span class="badge badge-model">P:{{ t.get('plan_model', t.get('model','sonnet')) }}</span>
         <span class="badge badge-model">E:{{ t.get('exec_model', t.get('model','sonnet')) }}</span>
+        {% if t.get('auto_approve') %}<span class="badge badge-auto">auto</span>{% endif %}
         {% if t.get('parent') %}<span>&middot; #{{ t.parent }}</span>{% endif %}
         {% if t.get('pushed_at') %}<span class="pushed-tag">pushed</span>{% endif %}
         {% if t.get('hidden') %}
@@ -228,7 +242,13 @@ BOARD_HTML = """
     <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
       <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:50] }}{% if t.prompt|length > 50 %}...{% endif %}</a>
       <div class="meta">
-        <span class="badge badge-{{ t.get('priority','medium') }}">{{ t.get('priority','medium') }}</span>
+        <form method="post" action="/tasks/{{ t.id }}/set-priority" style="margin:0;display:inline">
+          <select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-{{ t.get('priority','medium') }}" style="padding:0.1rem 0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.65rem;font-weight:600;cursor:pointer">
+            <option value="high" {% if t.get('priority')=='high' %}selected{% endif %}>high</option>
+            <option value="medium" {% if t.get('priority','medium')=='medium' %}selected{% endif %}>medium</option>
+            <option value="low" {% if t.get('priority')=='low' %}selected{% endif %}>low</option>
+          </select>
+        </form>
         {% if t.get('stop_reason') %}<span class="reason-tag">{{ t.stop_reason }}</span>{% endif %}
         {% if t.get('hidden') %}
         <form method="post" action="/tasks/{{ t.id }}/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>
@@ -247,7 +267,13 @@ BOARD_HTML = """
     <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
       <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:50] }}{% if t.prompt|length > 50 %}...{% endif %}</a>
       <div class="meta">
-        <span class="badge badge-{{ t.get('priority','medium') }}">{{ t.get('priority','medium') }}</span>
+        <form method="post" action="/tasks/{{ t.id }}/set-priority" style="margin:0;display:inline">
+          <select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-{{ t.get('priority','medium') }}" style="padding:0.1rem 0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.65rem;font-weight:600;cursor:pointer">
+            <option value="high" {% if t.get('priority')=='high' %}selected{% endif %}>high</option>
+            <option value="medium" {% if t.get('priority','medium')=='medium' %}selected{% endif %}>medium</option>
+            <option value="low" {% if t.get('priority')=='low' %}selected{% endif %}>low</option>
+          </select>
+        </form>
         {% if t.get('hidden') %}
         <form method="post" action="/tasks/{{ t.id }}/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>
         {% else %}
@@ -277,9 +303,15 @@ BOARD_HTML = """
     const prio = t.priority || 'medium';
     const planModel = t.plan_model || t.model || 'sonnet';
     const execModel = t.exec_model || t.model || 'sonnet';
-    let meta = '<span class="badge badge-' + prio + '">' + prio + '</span>';
+    let meta = '<form method="post" action="/tasks/' + t.id + '/set-priority" style="margin:0;display:inline">'
+      + '<select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-' + prio + '" style="padding:0.1rem 0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.65rem;font-weight:600;cursor:pointer">'
+      + '<option value="high"' + (prio==='high'?' selected':'') + '>high</option>'
+      + '<option value="medium"' + (prio==='medium'?' selected':'') + '>medium</option>'
+      + '<option value="low"' + (prio==='low'?' selected':'') + '>low</option>'
+      + '</select></form>';
     meta += '<span class="badge badge-model">P:' + planModel + '</span>';
     meta += '<span class="badge badge-model">E:' + execModel + '</span>';
+    if (t.auto_approve) meta += '<span class="badge badge-auto">auto</span>';
     if (t.parent) meta += '<span>&middot; #' + t.parent + '</span>';
     if (t.pushed_at) meta += '<span class="pushed-tag">pushed</span>';
     if (t.stop_reason) meta += '<span class="reason-tag">' + esc(t.stop_reason) + '</span>';
@@ -415,6 +447,13 @@ DETAIL_HTML = """
        <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
        <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
      </select>
+   </form>
+   |
+   <form method="post" action="/tasks/{{ task.id }}/set-auto-approve" style="display:inline">
+     <label style="cursor:pointer;font-size:0.85rem">
+       <input type="hidden" name="auto_approve" value="0">
+       <input type="checkbox" name="auto_approve" value="1" {% if task.get('auto_approve') %}checked{% endif %} onchange="this.form.submit()"> Auto-approve
+     </label>
    </form>
    {% if task.get('parent') %}| Subtask of <a href="/tasks/{{ task.parent }}">#{{ task.parent }}</a>{% endif %}
    {% if task.get('created_at') %}| Created: <span class="timestamp">{{ task.created_at[:19] }}</span>{% endif %}
@@ -696,6 +735,7 @@ def add_task():
     prompt = request.form.get("prompt", "").strip()
     priority = request.form.get("priority", "medium")
     model = request.form.get("model", "sonnet")
+    auto_approve = request.form.get("auto_approve") == "1"
     if model not in ("sonnet", "opus", "haiku"):
         model = "sonnet"
     if not prompt:
@@ -711,6 +751,7 @@ def add_task():
             "priority": priority,
             "plan_model": model,
             "exec_model": model,
+            "auto_approve": auto_approve,
             "parent": None,
             "plan": None,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -758,6 +799,37 @@ def edit_task(task_id: int):
 
     locked_update(mutate)
     log_progress(task_id, "edited", f"priority={priority}, plan={plan_model}, exec={exec_model}")
+    return redirect(url_for("task_detail", task_id=task_id))
+
+
+@app.post("/tasks/<int:task_id>/set-priority")
+def set_priority(task_id: int):
+    priority = request.form.get("priority", "medium")
+    if priority not in ("high", "medium", "low"):
+        priority = "medium"
+
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id:
+                t["priority"] = priority
+                break
+
+    locked_update(mutate)
+    log_progress(task_id, "priority changed", priority)
+    return redirect(request.referrer or url_for("board"))
+
+
+@app.post("/tasks/<int:task_id>/set-auto-approve")
+def set_auto_approve(task_id: int):
+    auto_approve = request.form.get("auto_approve") == "1"
+
+    def mutate(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id:
+                t["auto_approve"] = auto_approve
+                break
+
+    locked_update(mutate)
     return redirect(url_for("task_detail", task_id=task_id))
 
 
