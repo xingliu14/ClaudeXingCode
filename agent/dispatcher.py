@@ -247,7 +247,7 @@ def git_commit(message: str) -> None:
 
 def append_progress(task_id: int, summary: str) -> None:
     """Legacy wrapper — writes a larger block for task completion."""
-    log_progress(task_id, "completed", summary[:200] if summary else "")
+    log_progress(task_id, "completed", summary or "")
 
 
 def detect_decomposition(task_id: int) -> bool:
