@@ -5,6 +5,13 @@
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Load OAuth token (and any other secrets) from .env if present
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    set -a
+    . "$SCRIPT_DIR/.env"
+    set +a
+fi
+
 cleanup() {
     echo "[start] Shutting down..."
     kill "$WEB_PID" "$WATCH_PID" 2>/dev/null || true

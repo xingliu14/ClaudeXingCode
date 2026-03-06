@@ -176,7 +176,10 @@ def run_cc_local(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
 def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     """
     Run Claude Code inside a Docker container for sandboxed execution.
-    Mounts the workspace read-write and Claude auth read-only.
+    Auth priority:
+      1. CLAUDE_CODE_OAUTH_TOKEN env var — no file mounts needed
+      2. ANTHROPIC_API_KEY env var — no file mounts needed
+      3. Credential files — mounts ~/.claude and ~/.claude.json read-only
     Returns (returncode, human-readable output text).
     """
     isolated_prompt = build_task_prompt(prompt)
@@ -188,15 +191,25 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
         "--model", model_id,
     ]
 
-    docker_cmd = [
-        "docker", "run", "--rm",
-        "-v", f"{WORKSPACE}:/workspace",
-        "-v", f"{CLAUDE_HOME}:/home/agent/.claude",
-        "-v", f"{CLAUDE_JSON}:/home/agent/.claude.json",
-        "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
-        "-w", "/workspace",
-        DOCKER_IMAGE,
-    ] + cc_cmd
+    oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+
+    docker_cmd = ["docker", "run", "--rm", "-v", f"{WORKSPACE}:/workspace"]
+
+    if oauth_token:
+        docker_cmd += ["-e", f"CLAUDE_CODE_OAUTH_TOKEN={oauth_token}"]
+        print("[dispatcher] Docker auth: CLAUDE_CODE_OAUTH_TOKEN", flush=True)
+    elif api_key:
+        docker_cmd += ["-e", f"ANTHROPIC_API_KEY={api_key}"]
+        print("[dispatcher] Docker auth: ANTHROPIC_API_KEY", flush=True)
+    else:
+        docker_cmd += [
+            "-v", f"{CLAUDE_HOME}:/home/agent/.claude:ro",
+            "-v", f"{CLAUDE_JSON}:/home/agent/.claude.json:ro",
+        ]
+        print("[dispatcher] Docker auth: credential file mounts", flush=True)
+
+    docker_cmd += ["-w", "/workspace", DOCKER_IMAGE] + cc_cmd
 
     print(f"[dispatcher] Running CC in Docker ({DOCKER_IMAGE})...", flush=True)
     result = subprocess.run(
