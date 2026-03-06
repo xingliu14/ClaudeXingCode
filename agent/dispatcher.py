@@ -191,8 +191,8 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     docker_cmd = [
         "docker", "run", "--rm",
         "-v", f"{WORKSPACE}:/workspace",
-        "-v", f"{CLAUDE_HOME}/settings.json:/home/agent/.claude/settings.json:ro",
-        "-v", f"{CLAUDE_JSON}:/home/agent/.claude.json:ro",
+        "-v", f"{CLAUDE_HOME}:/home/agent/.claude",
+        "-v", f"{CLAUDE_JSON}:/home/agent/.claude.json",
         "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
         "-w", "/workspace",
         DOCKER_IMAGE,

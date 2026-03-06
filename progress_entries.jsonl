@@ -51,3 +51,9 @@
 {"ts": "2026-03-05 21:34:02", "task_id": 3, "action": "plan approved", "details": "", "detail_file": null}
 {"ts": "2026-03-05 21:34:36", "task_id": 3, "action": "started execution", "details": "", "detail_file": null}
 {"ts": "2026-03-05 21:34:37", "task_id": 3, "action": "completed", "details": "Not logged in \u00b7 Please run /login", "detail_file": null}
+{"ts": "2026-03-05 21:36:21", "task_id": 3, "action": "requeued (retry)", "details": "", "detail_file": null}
+{"ts": "2026-03-05 21:36:31", "task_id": 3, "action": "started planning", "details": "Write a 100 word story about a flying dog.", "detail_file": null}
+{"ts": "2026-03-05 21:36:48", "task_id": 3, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-05 21:36:51", "task_id": 3, "action": "plan approved", "details": "", "detail_file": null}
+{"ts": "2026-03-05 21:37:48", "task_id": 3, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-05 21:37:49", "task_id": 3, "action": "completed", "details": "Not logged in \u00b7 Please run /login", "detail_file": null}
