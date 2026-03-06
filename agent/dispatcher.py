@@ -23,6 +23,7 @@ STATUS_FILE = TASKS_FILE.parent / "dispatcher_status.json"
 # Docker settings for sandboxed execution
 DOCKER_IMAGE = os.environ.get("DOCKER_IMAGE", "claude-agent:latest")
 CLAUDE_HOME = Path.home() / ".claude"
+CLAUDE_JSON = Path.home() / ".claude.json"
 
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
@@ -190,7 +191,8 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     docker_cmd = [
         "docker", "run", "--rm",
         "-v", f"{WORKSPACE}:/workspace",
-        "-v", f"{CLAUDE_HOME}:/root/.claude:ro",
+        "-v", f"{CLAUDE_HOME}:/home/agent/.claude:ro",
+        "-v", f"{CLAUDE_JSON}:/home/agent/.claude.json:ro",
         "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
         "-w", "/workspace",
         DOCKER_IMAGE,

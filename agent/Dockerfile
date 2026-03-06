@@ -21,6 +21,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
 
+# Non-root user — Claude Code refuses --dangerously-skip-permissions as root
+ARG HOST_UID=501
+RUN useradd -m -s /bin/bash -u ${HOST_UID} agent
+USER agent
+
 # This image is used as a sandboxed execution environment.
 # The dispatcher spawns `docker run --rm claude-agent:latest claude -p ...`
 # No agent source is needed inside — only the Claude CLI.
