@@ -143,6 +143,8 @@ def build_task_prompt(prompt: str) -> str:
         "You are working on a SINGLE, INDEPENDENT task. "
         "Do NOT reference, read, or build upon any previous tasks, task history, "
         "PROGRESS.md entries, or prior task outputs. Treat this as a completely fresh request.\n\n"
+        "If you create any output files (stories, text, code, etc.), save them in the "
+        "`progress/` directory, NOT in the project root.\n\n"
         f"TASK:\n{prompt}"
     )
 
