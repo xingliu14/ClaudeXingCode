@@ -9,18 +9,30 @@ import json
 import os
 import subprocess
 import time
-from datetime import datetime, date, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from progress_logger import log_progress
 from task_store import load_tasks, save_tasks, locked_update, TASKS_FILE
 
-WORKSPACE = os.environ.get("WORKSPACE", "/workspace")
-TOKEN_LIMIT = int(os.environ.get("TASK_TOKEN_LIMIT", "20"))
-PLAN_TIMEOUT_HOURS = int(os.environ.get("PLAN_APPROVAL_TIMEOUT_HOURS", "24"))
+_DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent)
+WORKSPACE = os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE)
+TOKEN_BACKOFF_SECONDS = int(os.environ.get("TOKEN_BACKOFF_SECONDS", "3600"))
 STATUS_FILE = TASKS_FILE.parent / "dispatcher_status.json"
 
+# Docker settings for sandboxed execution
+DOCKER_IMAGE = os.environ.get("DOCKER_IMAGE", "claude-agent:latest")
+CLAUDE_HOME = Path.home() / ".claude"
+
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+# Model mapping: short name -> Claude model ID
+MODEL_MAP = {
+    "sonnet": "claude-sonnet-4-6",
+    "opus": "claude-opus-4-6",
+    "haiku": "claude-haiku-4-5-20251001",
+}
+DEFAULT_MODEL = "sonnet"
 
 
 # ---------------------------------------------------------------------------
@@ -69,12 +81,22 @@ def pick_approved_task(tasks: list) -> dict | None:
     return sorted(approved, key=lambda t: (PRIORITY_ORDER.get(t.get("priority", "medium"), 1), t["id"]))[0]
 
 
-def tasks_completed_this_cycle(tasks: list) -> int:
-    today = date.today().isoformat()
-    return sum(
-        1 for t in tasks
-        if t["status"] == "done" and (t.get("completed_at") or "").startswith(today)
-    )
+TOKEN_LIMIT_PATTERNS = [
+    "token limit",
+    "rate_limit",
+    "rate limit",
+    "too many tokens",
+    "context window",
+    "max_tokens",
+    "exceeded your current quota",
+    "overloaded",
+]
+
+
+def is_token_limit_error(output: str) -> bool:
+    """Check if CC output indicates a token/rate limit error."""
+    lower = output.lower()
+    return any(p in lower for p in TOKEN_LIMIT_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -114,61 +136,75 @@ def parse_stream_json(raw: str) -> str:
     return raw  # fallback: return raw if nothing parsed
 
 
-def run_cc(prompt: str, mode: str) -> tuple[int, str]:
+def build_task_prompt(prompt: str) -> str:
+    """Wrap the user prompt with isolation instructions so CC ignores previous tasks."""
+    return (
+        "You are working on a SINGLE, INDEPENDENT task. "
+        "Do NOT reference, read, or build upon any previous tasks, task history, "
+        "PROGRESS.md entries, or prior task outputs. Treat this as a completely fresh request.\n\n"
+        f"TASK:\n{prompt}"
+    )
+
+
+def run_cc_local(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     """
-    Run Claude Code with the given prompt.
-    mode: "plan" uses --permission-mode plan; "execute" uses --dangerously-skip-permissions.
+    Run Claude Code locally in plan mode (read-only, safe).
     Returns (returncode, human-readable output text).
     """
-    base_cmd = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose"]
+    isolated_prompt = build_task_prompt(prompt)
+    model_id = MODEL_MAP.get(model, MODEL_MAP[DEFAULT_MODEL])
+    cmd = [
+        "claude", "-p", isolated_prompt,
+        "--output-format", "stream-json", "--verbose",
+        "--permission-mode", "plan",
+        "--model", model_id,
+    ]
 
-    if mode == "plan":
-        cmd = base_cmd + ["--permission-mode", "plan"]
-    else:
-        cmd = base_cmd + ["--dangerously-skip-permissions"]
-
-    print(f"[dispatcher] Running CC in {mode} mode...", flush=True)
+    print("[dispatcher] Running CC locally (plan mode)...", flush=True)
     result = subprocess.run(
         cmd,
         cwd=WORKSPACE,
         capture_output=True,
         text=True,
-        timeout=3600,  # 1 hour max per task
+        timeout=3600,
     )
     raw = result.stdout + result.stderr
     return result.returncode, parse_stream_json(raw)
 
 
-# ---------------------------------------------------------------------------
-# Plan approval gate
-# ---------------------------------------------------------------------------
-
-def wait_for_approval(task: dict) -> bool:
+def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     """
-    Poll tasks.json until the task status changes from plan_review.
-    Returns True if approved, False if rejected.
-    Timeout: PLAN_TIMEOUT_HOURS.
+    Run Claude Code inside a Docker container for sandboxed execution.
+    Mounts the workspace read-write and Claude auth read-only.
+    Returns (returncode, human-readable output text).
     """
-    deadline = time.time() + PLAN_TIMEOUT_HOURS * 3600
-    task_id = task["id"]
-    print(f"[dispatcher] Waiting for plan approval on task #{task_id} (timeout {PLAN_TIMEOUT_HOURS}h)...", flush=True)
+    isolated_prompt = build_task_prompt(prompt)
+    model_id = MODEL_MAP.get(model, MODEL_MAP[DEFAULT_MODEL])
+    cc_cmd = [
+        "claude", "-p", isolated_prompt,
+        "--output-format", "stream-json", "--verbose",
+        "--dangerously-skip-permissions",
+        "--model", model_id,
+    ]
 
-    while time.time() < deadline:
-        data = load_tasks()
-        current = next((t for t in data["tasks"] if t["id"] == task_id), None)
-        if current is None:
-            return False
-        if current["status"] == "in_progress":
-            return True
-        if current["status"] == "stopped":
-            return False
-        time.sleep(60)
+    docker_cmd = [
+        "docker", "run", "--rm",
+        "-v", f"{WORKSPACE}:/workspace",
+        "-v", f"{CLAUDE_HOME}:/root/.claude:ro",
+        "-e", f"ANTHROPIC_API_KEY={os.environ.get('ANTHROPIC_API_KEY', '')}",
+        "-w", "/workspace",
+        DOCKER_IMAGE,
+    ] + cc_cmd
 
-    # Timed out — auto-reject
-    update_task(task_id, status="stopped", stop_reason="timeout",
-                summary="Plan approval timed out",
-                progress_action="stopped", progress_details="plan approval timed out")
-    return False
+    print(f"[dispatcher] Running CC in Docker ({DOCKER_IMAGE})...", flush=True)
+    result = subprocess.run(
+        docker_cmd,
+        capture_output=True,
+        text=True,
+        timeout=3600,
+    )
+    raw = result.stdout + result.stderr
+    return result.returncode, parse_stream_json(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -176,16 +212,22 @@ def wait_for_approval(task: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def git_commit(message: str) -> None:
-    subprocess.run(
-        ["git", "add", "-A"],
-        cwd=WORKSPACE,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "commit", "-m", message],
-        cwd=WORKSPACE,
-        capture_output=True,
-    )
+    """Run git add + commit inside Docker so file ownership stays consistent."""
+    safe_msg = message.replace("'", "'\\''")
+    git_cmd = f"git add -A && git commit -m '{safe_msg}'"
+    docker_cmd = [
+        "docker", "run", "--rm",
+        "-v", f"{WORKSPACE}:/workspace",
+        "-w", "/workspace",
+        DOCKER_IMAGE,
+        "bash", "-c", git_cmd,
+    ]
+    result = subprocess.run(docker_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        # Fallback to local git if Docker fails (e.g., image not available)
+        print(f"[dispatcher] Docker git commit failed, falling back to local: {result.stderr[:200]}", flush=True)
+        subprocess.run(["git", "add", "-A"], cwd=WORKSPACE, capture_output=True)
+        subprocess.run(["git", "commit", "-m", message], cwd=WORKSPACE, capture_output=True)
 
 
 def append_progress(task_id: int, summary: str) -> None:
@@ -203,85 +245,102 @@ def detect_decomposition(task_id: int) -> bool:
 # Main loop
 # ---------------------------------------------------------------------------
 
+def pick_actionable_task(tasks: list) -> dict | None:
+    """Pick the next task to act on: approved tasks first, then pending."""
+    approved = pick_approved_task(tasks)
+    if approved:
+        return approved
+    return pick_next_task(tasks)
+
+
 def main() -> None:
     print("[dispatcher] Ralph Loop starting...", flush=True)
     write_status("idle", "Idle")
 
     while True:
         data = load_tasks()
-        completed_count = tasks_completed_this_cycle(data["tasks"])
+        task = pick_actionable_task(data["tasks"])
 
-        if completed_count >= TOKEN_LIMIT:
-            write_status("sleeping", f"Token limit ({TOKEN_LIMIT}) reached")
-            print(f"[dispatcher] Token limit of {TOKEN_LIMIT} tasks reached. Sleeping...", flush=True)
-            time.sleep(3600)
+        if task is None:
+            write_status("idle", "Idle — no actionable tasks")
+            time.sleep(60)
             continue
 
-        # Check for approved tasks first (approved while dispatcher was not running)
-        approved_task = pick_approved_task(data["tasks"])
-        if approved_task:
-            task = approved_task
-            task_id = task["id"]
-            print(f"[dispatcher] Resuming approved task #{task_id}: {task['prompt'][:80]}", flush=True)
+        # Approved tasks → execute; pending tasks → plan first
+        if task["status"] == "in_progress" and task.get("plan"):
+            execute_task(task)
         else:
-            task = pick_next_task(data["tasks"])
-            if task is None:
-                write_status("idle", "Idle — no pending tasks")
-                print("[dispatcher] No pending tasks. Sleeping 60s...", flush=True)
-                time.sleep(60)
-                continue
+            plan_task(task)
 
-            task_id = task["id"]
-            print(f"[dispatcher] Starting task #{task_id}: {task['prompt'][:80]}", flush=True)
 
-            # --- Phase A: Plan ---
-            write_status("running", f"Planning #{task_id}", task_id)
-            update_task(task_id, status="in_progress",
-                        progress_action="started planning",
-                        progress_details=task["prompt"][:80])
-            try:
-                _, plan_output = run_cc(task["prompt"], mode="plan")
-            except subprocess.TimeoutExpired:
-                update_task(task_id, status="stopped", stop_reason="timeout",
-                            summary="Plan step timed out",
-                            progress_action="stopped", progress_details="plan step timed out")
-                continue
+def plan_task(task: dict) -> None:
+    """Run CC locally in plan mode, then set task to plan_review."""
+    task_id = task["id"]
+    print(f"[dispatcher] Planning task #{task_id}: {task['prompt'][:80]}", flush=True)
 
-            update_task(task_id, status="plan_review", plan=plan_output,
-                        progress_action="plan ready for review")
+    write_status("running", f"Planning #{task_id}", task_id)
+    update_task(task_id, status="in_progress",
+                progress_action="started planning",
+                progress_details=task["prompt"][:80])
+    try:
+        _, plan_output = run_cc_local(task["prompt"], model=task.get("model", DEFAULT_MODEL))
+    except subprocess.TimeoutExpired:
+        update_task(task_id, status="stopped", stop_reason="timeout",
+                    summary="Plan step timed out",
+                    progress_action="stopped", progress_details="plan step timed out")
+        return
 
-            write_status("sleeping", f"Awaiting approval #{task_id}", task_id)
-            approved = wait_for_approval(task)
-            if not approved:
-                update_task(task_id, status="stopped", stop_reason="rejected",
-                            summary="Plan rejected or timed out",
-                            progress_action="stopped", progress_details="plan rejected or timed out")
-                continue
+    if is_token_limit_error(plan_output):
+        update_task(task_id, status="pending",
+                    progress_action="token limit hit during planning",
+                    progress_details="will retry after backoff")
+        write_status("sleeping", "Token limit — backing off")
+        print(f"[dispatcher] Token limit hit during plan. Sleeping {TOKEN_BACKOFF_SECONDS}s...", flush=True)
+        time.sleep(TOKEN_BACKOFF_SECONDS)
+        return
 
-        # --- Phase B: Execute ---
-        write_status("running", f"Executing #{task_id}", task_id)
-        update_task(task_id, status="in_progress",
-                    progress_action="started execution")
-        try:
-            _, exec_output = run_cc(task["prompt"], mode="execute")
-        except subprocess.TimeoutExpired:
-            update_task(task_id, status="stopped", stop_reason="timeout",
-                        summary="Execution timed out",
-                        progress_action="stopped", progress_details="execution timed out")
-            continue
+    update_task(task_id, status="plan_review", plan=plan_output,
+                progress_action="plan ready for review")
+    print(f"[dispatcher] Task #{task_id} plan ready for review.", flush=True)
 
-        if detect_decomposition(task_id):
-            update_task(task_id, status="decomposed",
-                        progress_action="decomposed into subtasks")
-            print(f"[dispatcher] Task #{task_id} decomposed into subtasks.", flush=True)
-        else:
-            now = datetime.now(timezone.utc).isoformat()
-            summary = exec_output[-2000:] if len(exec_output) > 2000 else exec_output
-            update_task(task_id, status="done", completed_at=now, summary=summary,
-                        progress_action="completed",
-                        progress_details=summary[:200] if summary else "")
-            git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
-            print(f"[dispatcher] Task #{task_id} done.", flush=True)
+
+def execute_task(task: dict) -> None:
+    """Run CC in Docker to execute an approved task."""
+    task_id = task["id"]
+    print(f"[dispatcher] Executing task #{task_id}: {task['prompt'][:80]}", flush=True)
+
+    write_status("running", f"Executing #{task_id}", task_id)
+    update_task(task_id, status="in_progress",
+                progress_action="started execution")
+    try:
+        _, exec_output = run_cc_docker(task["prompt"], model=task.get("model", DEFAULT_MODEL))
+    except subprocess.TimeoutExpired:
+        update_task(task_id, status="stopped", stop_reason="timeout",
+                    summary="Execution timed out",
+                    progress_action="stopped", progress_details="execution timed out")
+        return
+
+    if is_token_limit_error(exec_output):
+        update_task(task_id, status="pending",
+                    progress_action="token limit hit during execution",
+                    progress_details="will retry after backoff")
+        write_status("sleeping", "Token limit — backing off")
+        print(f"[dispatcher] Token limit hit during execution. Sleeping {TOKEN_BACKOFF_SECONDS}s...", flush=True)
+        time.sleep(TOKEN_BACKOFF_SECONDS)
+        return
+
+    if detect_decomposition(task_id):
+        update_task(task_id, status="decomposed",
+                    progress_action="decomposed into subtasks")
+        print(f"[dispatcher] Task #{task_id} decomposed into subtasks.", flush=True)
+    else:
+        now = datetime.now(timezone.utc).isoformat()
+        summary = exec_output[-2000:] if len(exec_output) > 2000 else exec_output
+        update_task(task_id, status="done", completed_at=now, summary=summary,
+                    progress_action="completed",
+                    progress_details=summary[:200] if summary else "")
+        git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
+        print(f"[dispatcher] Task #{task_id} done.", flush=True)
 
 
 if __name__ == "__main__":

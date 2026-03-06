@@ -19,3 +19,10 @@
 {"ts": "2026-03-04 22:58:28", "task_id": 2, "action": "plan approved", "details": "", "detail_file": null}
 {"ts": "2026-03-04 23:03:57", "task_id": 2, "action": "started execution", "details": "", "detail_file": null}
 {"ts": "2026-03-04 23:04:16", "task_id": 2, "action": "completed", "details": "Perfect! I've completed your haiku about BBQ. Here it is:  **Smoke curls through the air**   **Tende... \u2192 task_2_2026-03-04_230416.txt", "detail_file": "task_2_2026-03-04_230416.txt"}
+{"ts": "2026-03-05 09:43:15", "task_id": 3, "action": "created", "details": "priority=medium, prompt=Write a 100 word story about a flying dog.", "detail_file": null}
+{"ts": "2026-03-05 09:43:31", "task_id": 3, "action": "started planning", "details": "Write a 100 word story about a flying dog.", "detail_file": null}
+{"ts": "2026-03-05 09:44:15", "task_id": 3, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-05 09:49:24", "task_id": 3, "action": "plan rejected", "details": "", "detail_file": null}
+{"ts": "2026-03-05 09:49:25", "task_id": 3, "action": "requeued (retry)", "details": "", "detail_file": null}
+{"ts": "2026-03-05 09:49:58", "task_id": 3, "action": "started planning", "details": "Write a 100 word story about a flying dog.", "detail_file": null}
+{"ts": "2026-03-05 09:50:12", "task_id": 3, "action": "plan ready for review", "details": "", "detail_file": null}

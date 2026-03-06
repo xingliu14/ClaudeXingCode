@@ -21,13 +21,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
 
-# Python deps for the agent
-COPY requirements.txt /agent/requirements.txt
-RUN pip3 install -r /agent/requirements.txt
-
-# Copy agent source
-COPY . /agent/
-
-WORKDIR /agent
-
-CMD ["python3", "dispatcher.py"]
+# This image is used as a sandboxed execution environment.
+# The dispatcher spawns `docker run --rm claude-agent:latest claude -p ...`
+# No agent source is needed inside — only the Claude CLI.
+WORKDIR /workspace

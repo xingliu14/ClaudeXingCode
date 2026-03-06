@@ -28,7 +28,8 @@ from flask import Flask, redirect, render_template_string, request, url_for, jso
 from progress_logger import log_progress
 from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE
 
-WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace"))
+_DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent)
+WORKSPACE = Path(os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE))
 PROGRESS_FILE = WORKSPACE / "PROGRESS.md"
 
 app = Flask(__name__)
@@ -138,6 +139,7 @@ BOARD_HTML = """
     .badge-high { background: #fee2e2; color: #b91c1c; }
     .badge-medium { background: #fef9c3; color: #92400e; }
     .badge-low { background: #dcfce7; color: #166534; }
+    .badge-model { background: #e0e7ff; color: #3730a3; }
     .reason-tag { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
                   font-size: 0.65rem; font-weight: 600; background: #fecaca; color: #991b1b; }
     .pushed-tag { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
@@ -168,6 +170,11 @@ BOARD_HTML = """
     <option value="high">High</option>
     <option value="low">Low</option>
   </select>
+  <select name="model">
+    <option value="sonnet">Sonnet</option>
+    <option value="opus">Opus</option>
+    <option value="haiku">Haiku</option>
+  </select>
   <button type="submit">Add</button>
 </form>
 
@@ -195,6 +202,7 @@ BOARD_HTML = """
       <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:50] }}{% if t.prompt|length > 50 %}...{% endif %}</a>
       <div class="meta">
         <span class="badge badge-{{ t.get('priority','medium') }}">{{ t.get('priority','medium') }}</span>
+        <span class="badge badge-model">{{ t.get('model','sonnet') }}</span>
         {% if t.get('parent') %}<span>&middot; #{{ t.parent }}</span>{% endif %}
         {% if t.get('pushed_at') %}<span class="pushed-tag">pushed</span>{% endif %}
         {% if t.get('hidden') %}
@@ -269,7 +277,9 @@ BOARD_HTML = """
     const cls = t.hidden ? ' hidden-card' : '';
     const prompt = t.prompt.length > 50 ? esc(t.prompt.slice(0,50)) + '...' : esc(t.prompt);
     const prio = t.priority || 'medium';
+    const model = t.model || 'sonnet';
     let meta = '<span class="badge badge-' + prio + '">' + prio + '</span>';
+    meta += '<span class="badge badge-model">' + model + '</span>';
     if (t.parent) meta += '<span>&middot; #' + t.parent + '</span>';
     if (t.pushed_at) meta += '<span class="pushed-tag">pushed</span>';
     if (t.stop_reason) meta += '<span class="reason-tag">' + esc(t.stop_reason) + '</span>';
@@ -391,6 +401,7 @@ DETAIL_HTML = """
   {% if task.get('stop_reason') %}<span class="state-badge state-stopped" style="margin-left:0.3rem">{{ task.stop_reason }}</span>{% endif %}
   {% if task.get('pushed_at') %}<span class="state-badge state-done" style="margin-left:0.3rem">pushed</span>{% endif %}
    | Priority: {{ task.get('priority','medium') }}
+   | Model: {{ task.get('model','sonnet') }}
    {% if task.get('parent') %}| Subtask of <a href="/tasks/{{ task.parent }}">#{{ task.parent }}</a>{% endif %}
    {% if task.get('created_at') %}| Created: <span class="timestamp">{{ task.created_at[:19] }}</span>{% endif %}
    {% if task.get('completed_at') %}| Completed: <span class="timestamp">{{ task.completed_at[:19] }}</span>{% endif %}
@@ -477,6 +488,12 @@ DETAIL_HTML = """
         <option value="high" {% if task.get('priority')=='high' %}selected{% endif %}>High</option>
         <option value="medium" {% if task.get('priority','medium')=='medium' %}selected{% endif %}>Medium</option>
         <option value="low" {% if task.get('priority')=='low' %}selected{% endif %}>Low</option>
+      </select>
+      <label>Model:</label>
+      <select name="model">
+        <option value="sonnet" {% if task.get('model','sonnet')=='sonnet' %}selected{% endif %}>Sonnet</option>
+        <option value="opus" {% if task.get('model','sonnet')=='opus' %}selected{% endif %}>Opus</option>
+        <option value="haiku" {% if task.get('model','sonnet')=='haiku' %}selected{% endif %}>Haiku</option>
       </select>
       <button class="btn btn-edit" type="submit">Save</button>
       <button class="btn" type="button" onclick="document.getElementById('edit-form').style.display='none'" style="background:#e5e7eb;color:#333">Cancel</button>
@@ -656,6 +673,9 @@ def board():
 def add_task():
     prompt = request.form.get("prompt", "").strip()
     priority = request.form.get("priority", "medium")
+    model = request.form.get("model", "sonnet")
+    if model not in ("sonnet", "opus", "haiku"):
+        model = "sonnet"
     if not prompt:
         return redirect(url_for("board"))
 
@@ -667,6 +687,7 @@ def add_task():
             "status": "pending",
             "prompt": prompt,
             "priority": priority,
+            "model": model,
             "parent": None,
             "plan": None,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -695,6 +716,9 @@ def task_detail(task_id: int):
 def edit_task(task_id: int):
     prompt = request.form.get("prompt", "").strip()
     priority = request.form.get("priority", "medium")
+    model = request.form.get("model", "sonnet")
+    if model not in ("sonnet", "opus", "haiku"):
+        model = "sonnet"
 
     def mutate(data):
         for t in data["tasks"]:
@@ -702,10 +726,11 @@ def edit_task(task_id: int):
                 if prompt:
                     t["prompt"] = prompt
                 t["priority"] = priority
+                t["model"] = model
                 break
 
     locked_update(mutate)
-    log_progress(task_id, "edited", f"priority={priority}")
+    log_progress(task_id, "edited", f"priority={priority}, model={model}")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
@@ -892,4 +917,4 @@ def dispatcher_status():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001, debug=False)
+    app.run(host="0.0.0.0", port=5001, debug=False, use_reloader=True)

@@ -12,7 +12,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace"))
+_DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent)
+WORKSPACE = Path(os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE))
 PROGRESS_FILE = WORKSPACE / "PROGRESS.md"
 ENTRIES_FILE = WORKSPACE / "progress_entries.jsonl"
 DETAILS_DIR = WORKSPACE / "progress"

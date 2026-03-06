@@ -10,7 +10,18 @@
       "created_at": "2026-03-05T06:48:39.902181+00:00",
       "completed_at": "2026-03-05T07:04:16.532345+00:00",
       "summary": "Perfect! I've completed your haiku about BBQ. Here it is:\n\n**Smoke curls through the air**  \n**Tender meat falls from the bone**  \n**Summer on my tongue**\n\nThe haiku follows the traditional 5-7-5 syllable structure and captures the sensory experience of BBQ \u2014 the visual of smoke, the texture of perfectly cooked meat, and the taste that evokes summer memories. Task #2 has been marked as completed in the project tracking system."
+    },
+    {
+      "id": 3,
+      "status": "plan_review",
+      "prompt": "Write a 100 word story about a flying dog.",
+      "priority": "medium",
+      "parent": null,
+      "plan": "I'll help you write a 100-word story about a flying dog. Let me create a plan for this task.",
+      "created_at": "2026-03-05T17:43:15.645294+00:00",
+      "completed_at": null,
+      "summary": null
     }
   ],
-  "next_id": 3
+  "next_id": 4
 }

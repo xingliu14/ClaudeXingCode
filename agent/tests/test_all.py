@@ -7,7 +7,7 @@ All file I/O uses tmp_path fixtures; all external calls are mocked.
 import json
 import os
 import sys
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -177,34 +177,26 @@ class TestPickNextTask:
         assert pick_next_task(tasks)["id"] == 1
 
 
-class TestTasksCompletedThisCycle:
-    def test_counts_today(self):
-        from dispatcher import tasks_completed_this_cycle
+class TestIsTokenLimitError:
+    def test_detects_rate_limit(self):
+        from dispatcher import is_token_limit_error
 
-        today = date.today().isoformat()
-        tasks = [
-            {"id": 1, "status": "done", "completed_at": f"{today}T10:00:00"},
-            {"id": 2, "status": "done", "completed_at": f"{today}T14:00:00"},
-            {"id": 3, "status": "pending"},
-        ]
-        assert tasks_completed_this_cycle(tasks) == 2
+        assert is_token_limit_error("Error: rate_limit_error — too many requests") is True
 
-    def test_ignores_other_dates(self):
-        from dispatcher import tasks_completed_this_cycle
+    def test_detects_token_limit(self):
+        from dispatcher import is_token_limit_error
 
-        tasks = [
-            {"id": 1, "status": "done", "completed_at": "2020-01-01T10:00:00"},
-        ]
-        assert tasks_completed_this_cycle(tasks) == 0
+        assert is_token_limit_error("Stopped: token limit reached") is True
 
-    def test_ignores_non_done(self):
-        from dispatcher import tasks_completed_this_cycle
+    def test_detects_context_window(self):
+        from dispatcher import is_token_limit_error
 
-        today = date.today().isoformat()
-        tasks = [
-            {"id": 1, "status": "stopped", "completed_at": f"{today}T10:00:00"},
-        ]
-        assert tasks_completed_this_cycle(tasks) == 0
+        assert is_token_limit_error("context window exceeded") is True
+
+    def test_ignores_normal_output(self):
+        from dispatcher import is_token_limit_error
+
+        assert is_token_limit_error("Task completed successfully") is False
 
 
 class TestParseStreamJson:
@@ -227,7 +219,7 @@ class TestParseStreamJson:
 
 
 class TestRunCC:
-    def test_plan_mode_command(self, monkeypatch):
+    def test_plan_runs_locally(self, monkeypatch):
         import dispatcher
 
         mock_run = MagicMock(return_value=MagicMock(
@@ -235,17 +227,34 @@ class TestRunCC:
         ))
         monkeypatch.setattr("subprocess.run", mock_run)
 
-        code, output = dispatcher.run_cc("do something", "plan")
+        code, output = dispatcher.run_cc_local("do something")
 
         cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "claude"  # runs locally, not via docker
         assert "--permission-mode" in cmd
         assert "plan" in cmd
         assert "--dangerously-skip-permissions" not in cmd
-        assert "-p" in cmd
-        assert "do something" in cmd
+        assert "--model" in cmd
+        # Default model is sonnet
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "claude-sonnet-4-6"
         assert code == 0
 
-    def test_execute_mode_command(self, monkeypatch):
+    def test_plan_uses_specified_model(self, monkeypatch):
+        import dispatcher
+
+        mock_run = MagicMock(return_value=MagicMock(
+            returncode=0, stdout="plan output", stderr=""
+        ))
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        dispatcher.run_cc_local("do something", model="opus")
+
+        cmd = mock_run.call_args[0][0]
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "claude-opus-4-6"
+
+    def test_execute_runs_in_docker(self, monkeypatch):
         import dispatcher
 
         mock_run = MagicMock(return_value=MagicMock(
@@ -253,81 +262,59 @@ class TestRunCC:
         ))
         monkeypatch.setattr("subprocess.run", mock_run)
 
-        code, output = dispatcher.run_cc("do something", "execute")
+        code, output = dispatcher.run_cc_docker("do something")
 
         cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "docker"  # runs in container
+        assert "run" in cmd
         assert "--dangerously-skip-permissions" in cmd
         assert "--permission-mode" not in cmd
+        assert "--model" in cmd
         assert code == 0
 
-
-class TestWaitForApproval:
-    def test_returns_true_on_approved(self, tmp_path, monkeypatch):
+    def test_execute_uses_specified_model(self, monkeypatch):
         import dispatcher
-        import task_store
 
-        # Start with plan_review, then switch to in_progress (approved) on second load
-        states = [
-            {"tasks": [{"id": 1, "status": "plan_review"}]},
-            {"tasks": [{"id": 1, "status": "in_progress"}]},
-        ]
-        call_count = {"n": 0}
+        mock_run = MagicMock(return_value=MagicMock(
+            returncode=0, stdout="exec output", stderr=""
+        ))
+        monkeypatch.setattr("subprocess.run", mock_run)
 
-        def fake_load():
-            data = states[min(call_count["n"], len(states) - 1)]
-            call_count["n"] += 1
-            return data
+        dispatcher.run_cc_docker("do something", model="haiku")
 
-        monkeypatch.setattr(task_store, "load_tasks", fake_load)
-        monkeypatch.setattr(dispatcher, "load_tasks", fake_load)
-        monkeypatch.setattr("time.sleep", lambda _: None)
-        monkeypatch.setattr(dispatcher, "PLAN_TIMEOUT_HOURS", 1)
+        cmd = mock_run.call_args[0][0]
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "claude-haiku-4-5-20251001"
 
-        assert dispatcher.wait_for_approval({"id": 1}) is True
-
-    def test_returns_false_on_stopped(self, monkeypatch):
-        import dispatcher
-        import task_store
-
-        def fake_load():
-            return {"tasks": [{"id": 1, "status": "stopped"}]}
-
-        monkeypatch.setattr(task_store, "load_tasks", fake_load)
-        monkeypatch.setattr(dispatcher, "load_tasks", fake_load)
-        monkeypatch.setattr("time.sleep", lambda _: None)
-        monkeypatch.setattr(dispatcher, "PLAN_TIMEOUT_HOURS", 1)
-
-        assert dispatcher.wait_for_approval({"id": 1}) is False
-
-    def test_returns_false_on_missing_task(self, monkeypatch):
-        import dispatcher
-        import task_store
-
-        def fake_load():
-            return {"tasks": []}
-
-        monkeypatch.setattr(task_store, "load_tasks", fake_load)
-        monkeypatch.setattr(dispatcher, "load_tasks", fake_load)
-        monkeypatch.setattr("time.sleep", lambda _: None)
-        monkeypatch.setattr(dispatcher, "PLAN_TIMEOUT_HOURS", 1)
-
-        assert dispatcher.wait_for_approval({"id": 99}) is False
 
 
 class TestGitCommit:
-    def test_calls_git_add_and_commit(self, monkeypatch):
+    def test_runs_in_docker(self, monkeypatch):
         import dispatcher
 
-        mock_run = MagicMock()
+        mock_run = MagicMock(return_value=MagicMock(returncode=0))
         monkeypatch.setattr("subprocess.run", mock_run)
 
         dispatcher.git_commit("test commit message")
 
-        assert mock_run.call_count == 2
-        add_call = mock_run.call_args_list[0]
-        assert add_call[0][0] == ["git", "add", "-A"]
-        commit_call = mock_run.call_args_list[1]
-        assert commit_call[0][0] == ["git", "commit", "-m", "test commit message"]
+        assert mock_run.call_count == 1
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "docker"
+        assert "run" in cmd
+        assert "bash" in cmd
+
+    def test_falls_back_to_local_on_docker_failure(self, monkeypatch):
+        import dispatcher
+
+        mock_run = MagicMock(return_value=MagicMock(returncode=1, stderr="docker not found"))
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        dispatcher.git_commit("test commit message")
+
+        # 1 docker attempt + 2 local git calls
+        assert mock_run.call_count == 3
+        assert mock_run.call_args_list[1][0][0] == ["git", "add", "-A"]
+        assert mock_run.call_args_list[2][0][0] == ["git", "commit", "-m", "test commit message"]
 
 
 class TestDetectDecomposition:
@@ -441,6 +428,25 @@ class TestAddTaskRoute:
         assert task["prompt"] == "Fix the bug"
         assert task["priority"] == "high"
         assert task["status"] == "pending"
+        assert task["model"] == "sonnet"  # default model
+
+    def test_creates_task_with_model(self, web_client):
+        client, tf = web_client
+        resp = client.post("/tasks", data={"prompt": "Think hard", "priority": "high", "model": "opus"})
+        assert resp.status_code == 302
+
+        data = json.loads(tf.read_text())
+        task = data["tasks"][0]
+        assert task["model"] == "opus"
+
+    def test_invalid_model_defaults_to_sonnet(self, web_client):
+        client, tf = web_client
+        resp = client.post("/tasks", data={"prompt": "Test", "priority": "medium", "model": "gpt4"})
+        assert resp.status_code == 302
+
+        data = json.loads(tf.read_text())
+        task = data["tasks"][0]
+        assert task["model"] == "sonnet"
 
     def test_empty_prompt_no_task(self, web_client):
         client, tf = web_client
