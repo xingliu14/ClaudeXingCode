@@ -1,4 +1,0 @@
-
-Claude configuration file not found at: /root/.claude.json
-A backup file exists at: /root/.claude/backups/.claude.json.backup.1772758503661
-You can manually restore it by running: cp "/root/.claude/b

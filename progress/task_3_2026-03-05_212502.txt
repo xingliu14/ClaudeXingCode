@@ -1,1 +1,0 @@
-usr/lib/node_modules/@anthropic-ai/claude-code/cli.js:6334:5239)\n    at W8 (file:///usr/lib/node_modules/@anthropic-ai/claude-code/cli.js:6334:3758)\n    at sQK (file:///usr/lib/node_modules/@anthrop
