@@ -355,7 +355,7 @@ def execute_task(task: dict) -> None:
         summary = exec_output[-2000:] if len(exec_output) > 2000 else exec_output
         update_task(task_id, status="done", completed_at=now, summary=summary,
                     progress_action="completed",
-                    progress_details=summary[:200] if summary else "")
+                    progress_details=summary or "")
         git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
         print(f"[dispatcher] Task #{task_id} done.", flush=True)
 
