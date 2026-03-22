@@ -11,7 +11,7 @@ import json
 import os
 from pathlib import Path
 
-_DEFAULT_TASKS = str(Path(__file__).resolve().parent.parent / "tasks.json")
+_DEFAULT_TASKS = str(Path(__file__).resolve().parent.parent.parent / "tasks.json")
 TASKS_FILE = Path(os.environ.get("TASKS_FILE", _DEFAULT_TASKS))
 
 

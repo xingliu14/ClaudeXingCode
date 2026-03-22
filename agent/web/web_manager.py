@@ -20,17 +20,21 @@ Routes:
 
 import json
 import os
+import sys
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+_AGENT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_AGENT_DIR / "core"))
 
 from flask import Flask, redirect, render_template_string, request, url_for, jsonify
 from progress_logger import log_progress
 from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE
 
-_DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent)
+_DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent.parent)
 WORKSPACE = Path(os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE))
-PROGRESS_FILE = WORKSPACE / "PROGRESS.md"
+PROGRESS_FILE = WORKSPACE / "agent_log" / "agent_log.md"
 
 app = Flask(__name__)
 
@@ -663,7 +667,7 @@ PROGRESS_HTML = """
 <body>
 """ + HEADER_HTML + """
 <div class="content">
-<h1>PROGRESS.md</h1>
+<h1>Agent Task Log</h1>
 {% if content %}
 <pre>{{ content }}</pre>
 {% else %}
@@ -1006,7 +1010,7 @@ def git_log():
 def api_tasks():
     """Return all tasks as JSON for live polling."""
     data = load_tasks()
-    status_file = TASKS_FILE.parent / "dispatcher_status.json"
+    status_file = TASKS_FILE.parent / "agent_log" / "dispatcher_status.json"
     dispatcher = {"state": "idle", "label": "Idle"}
     if status_file.exists():
         try:
@@ -1023,7 +1027,7 @@ def dispatcher_status():
     The dispatcher writes its state to a small JSON file so the Web UI can
     display it.  If the file doesn't exist we report "idle".
     """
-    status_file = TASKS_FILE.parent / "dispatcher_status.json"
+    status_file = TASKS_FILE.parent / "agent_log" / "dispatcher_status.json"
     if status_file.exists():
         try:
             return jsonify(json.loads(status_file.read_text()))

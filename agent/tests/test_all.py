@@ -13,8 +13,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Ensure the agent package is importable
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Wire all subpackages so imports work without install
+_AGENT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_AGENT / "core"))        # task_store, progress_logger
+sys.path.insert(0, str(_AGENT / "dispatcher"))  # dispatcher
+sys.path.insert(0, str(_AGENT / "web"))         # web_manager
+sys.path.insert(0, str(_AGENT))                 # daily_digest
 
 
 # ============================================================================
@@ -493,9 +497,9 @@ def web_client(tmp_path, monkeypatch):
     monkeypatch.setattr(task_store, "TASKS_FILE", tf)
     # Redirect progress logger to tmp_path so it doesn't try /workspace
     monkeypatch.setattr(progress_logger, "WORKSPACE", tmp_path)
-    monkeypatch.setattr(progress_logger, "PROGRESS_FILE", tmp_path / "PROGRESS.md")
-    monkeypatch.setattr(progress_logger, "ENTRIES_FILE", tmp_path / "progress_entries.jsonl")
-    monkeypatch.setattr(progress_logger, "DETAILS_DIR", tmp_path / "progress")
+    monkeypatch.setattr(progress_logger, "PROGRESS_FILE", tmp_path / "agent_log" / "agent_log.md")
+    monkeypatch.setattr(progress_logger, "ENTRIES_FILE", tmp_path / "agent_log" / "entries.jsonl")
+    monkeypatch.setattr(progress_logger, "DETAILS_DIR", tmp_path / "agent_log")
     web_manager.app.config["TESTING"] = True
     with web_manager.app.test_client() as client:
         yield client, tf

@@ -7,18 +7,22 @@ waits for user approval via the web UI, then executes.
 
 import json
 import os
+import sys
 import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+_AGENT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_AGENT_DIR / "core"))
+
 from progress_logger import log_progress
 from task_store import load_tasks, save_tasks, locked_update, TASKS_FILE
 
-_DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent)
+_DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent.parent)
 WORKSPACE = os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE)
 TOKEN_BACKOFF_SECONDS = int(os.environ.get("TOKEN_BACKOFF_SECONDS", "3600"))
-STATUS_FILE = TASKS_FILE.parent / "dispatcher_status.json"
+STATUS_FILE = TASKS_FILE.parent / "agent_log" / "dispatcher_status.json"
 
 # Docker settings for sandboxed execution
 DOCKER_IMAGE = os.environ.get("DOCKER_IMAGE", "claude-agent:latest")
@@ -144,7 +148,7 @@ def build_task_prompt(prompt: str) -> str:
         "Do NOT reference, read, or build upon any previous tasks, task history, "
         "PROGRESS.md entries, or prior task outputs. Treat this as a completely fresh request.\n\n"
         "If you create any output files (stories, text, code, etc.), save them in the "
-        "`progress/` directory, NOT in the project root.\n\n"
+        "`agent_log/` directory, NOT in the project root.\n\n"
         f"TASK:\n{prompt}"
     )
 

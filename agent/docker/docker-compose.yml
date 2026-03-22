@@ -2,10 +2,12 @@
 # The dispatcher and web manager run locally; only task execution
 # uses this Docker image via `docker run --rm`.
 #
-# Usage:
+# Usage (run from agent/docker/):
 #   docker compose build        # rebuild the image
 #
 services:
   agent:
-    build: .
+    build:
+      context: ..
+      dockerfile: Dockerfile
     image: claude-agent:latest

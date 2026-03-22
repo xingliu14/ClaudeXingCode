@@ -21,18 +21,18 @@ trap cleanup EXIT INT TERM
 
 # --- Web manager: Flask reloader handles restarts automatically ---
 echo "[start] Starting web manager on :5001 (auto-reload on)..."
-python3 "$SCRIPT_DIR/web_manager.py" &
+python3 "$SCRIPT_DIR/web/web_manager.py" &
 WEB_PID=$!
 
 # --- Dispatcher: restart whenever any .py file in agent/ changes ---
 py_checksum() {
-    find "$SCRIPT_DIR" -maxdepth 1 -name "*.py" | sort | xargs stat -f "%m %N" 2>/dev/null | md5
+    find "$SCRIPT_DIR" -maxdepth 2 -name "*.py" | sort | xargs stat -f "%m %N" 2>/dev/null | md5
 }
 
 restart_dispatcher() {
     while true; do
         echo "[start] Starting dispatcher..."
-        python3 "$SCRIPT_DIR/dispatcher.py" &
+        python3 "$SCRIPT_DIR/dispatcher/dispatcher.py" &
         DISP_PID=$!
         LAST=$(py_checksum)
 

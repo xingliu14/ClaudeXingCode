@@ -9,7 +9,7 @@ export WORKSPACE="$(pwd)"
 export PYTHONPATH="$(pwd)/agent"
 
 # Start dispatcher in background, capture its PID
-python3 agent/dispatcher.py &
+python3 agent/dispatcher/dispatcher.py &
 DISPATCHER_PID=$!
 echo "[agent] Dispatcher started (PID $DISPATCHER_PID)"
 
@@ -18,4 +18,4 @@ trap "echo '[agent] Shutting down...'; kill $DISPATCHER_PID 2>/dev/null" EXIT
 
 # Start web manager in foreground (Ctrl+C hits this)
 echo "[agent] Web UI starting at http://localhost:5001"
-python3 agent/web_manager.py
+python3 agent/web/web_manager.py

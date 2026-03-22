@@ -1,30 +1,43 @@
-# Agent Instructions
+# ClaudeXingCode
 
-You are an autonomous coding agent. The project is mounted at `/workspace`.
+## What This Is
 
-## Task Decomposition
+A personal all-around assistant agent ("Ralph Loop") running on a Mac. The system
+lets you queue any tasks (coding, research, etc), review an AI-generated plan, then
+execute in a sandboxed Docker container — with a human approval gate before any code runs.
 
-If a task requires more than ~30 minutes of focused work, **decompose instead of attempting it**:
+## Design Philosophy
 
-1. Write 3–5 subtasks to `tasks.json` with `"status": "pending"` and `"parent": <this task's id>`.
-2. Set your own task's status to `"decomposed"`.
-3. Stop — the dispatcher picks up subtasks automatically.
+**Maximize Claude's workforce.** The primary goal is to let Claude work for the
+human as much as possible, with delegation and monitoring kept as frictionless as
+possible. This drives all development and design decisions.
 
-## After Each Completed Task
+**Human in the loop.** The agent plans autonomously but never executes without
+explicit user approval. Every task goes through: plan -> review -> execute.
 
-Append to `PROGRESS.md`:
+**Two-phase execution.** Planning runs locally (read-only). Execution runs in
+Docker (`--dangerously-skip-permissions`), torn down after each task. This
+separates safe exploration from potentially destructive action.
 
-```
-## Task #<id> — <date>
-- What I did
-- Any gotchas or non-obvious decisions
-```
+**Two Claude roles.** Dev Claude (you, reading this) helps build and maintain
+this repo. Execution Claude runs inside Docker and performs tasks autonomously.
+They have different instructions and different permission levels.
 
-## Git & GitHub
+**Safety and privacy first.** All computation runs on your Mac. Credentials
+never enter the agent context. Execution is sandboxed. Push requires a second
+Web UI approval gate.
 
-- Never push to remote — the dispatcher handles git push after Web UI approval.
-- You may use `gh repo create` and `git remote add` when a task requires it.
+## Where to Look
 
-## Ambiguous Tasks
+Keep this section updated when the structure changes.
 
-If a task is unclear, write a clarifying question to `PROGRESS.md` and mark the task `"failed"`.
+- **System design (architecture, decomposition, result format, status flow)** → `DESIGN.md`
+- **Implementation plan, todo list, build order, verification** → `IMPLEMENTATION.md`
+- **Ideas, inspiration, future scope** → `IDEAS.md`
+- **Agent code conventions (dispatcher, web, core)** → `agent/CLAUDE.md`
+- **Execution Claude instructions (baked into Docker image)** → `agent/docker/CLAUDE.md`
+
+## Modification Guide
+
+Design and CLAUDE.md are very crucial, don't update the DESIGN.md directly!!!! If you find problem
+you can prompt me to review the design and CLAUDE.md.

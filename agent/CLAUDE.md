@@ -3,8 +3,8 @@
 ## Run locally
 
 ```bash
-./agent/start.sh          # web_manager + dispatcher; auto-restarts on .py changes
-docker compose build      # rebuild execution sandbox image
+./agent/start.sh                                          # web + dispatcher; auto-restarts on .py changes
+docker compose -f agent/docker/docker-compose.yml build   # rebuild execution sandbox image
 ```
 
 ## State machine

@@ -12,11 +12,11 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-_DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent)
+_DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent.parent)
 WORKSPACE = Path(os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE))
-PROGRESS_FILE = WORKSPACE / "PROGRESS.md"
-ENTRIES_FILE = WORKSPACE / "progress_entries.jsonl"
-DETAILS_DIR = WORKSPACE / "progress"
+PROGRESS_FILE = WORKSPACE / "agent_log" / "agent_log.md"
+ENTRIES_FILE = WORKSPACE / "agent_log" / "entries.jsonl"
+DETAILS_DIR = WORKSPACE / "agent_log"
 
 MAX_INLINE_LEN = 120
 
@@ -68,6 +68,7 @@ def log_progress(task_id: int | None, action: str, details: str = "") -> None:
     }
 
     # Append to JSONL store
+    ENTRIES_FILE.parent.mkdir(parents=True, exist_ok=True)
     with ENTRIES_FILE.open("a") as f:
         f.write(json.dumps(entry) + "\n")
 
