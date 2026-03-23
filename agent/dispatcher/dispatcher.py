@@ -7,6 +7,7 @@ waits for user approval via the web UI, then executes.
 
 import json
 import os
+import re
 import sys
 import subprocess
 import time
@@ -17,12 +18,13 @@ _AGENT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_AGENT_DIR / "core"))
 
 from progress_logger import log_progress
-from task_store import load_tasks, save_tasks, locked_update, TASKS_FILE
+from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE, STATUS_FILE
 
 _DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent.parent)
 WORKSPACE = os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE)
 TOKEN_BACKOFF_SECONDS = int(os.environ.get("TOKEN_BACKOFF_SECONDS", "3600"))
-STATUS_FILE = TASKS_FILE.parent / "agent_log" / "dispatcher_status.json"
+MAX_SUB_TASK_DEPTH = int(os.environ.get("MAX_SUB_TASK_DEPTH", "9"))
+MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
 
 # Docker settings for sandboxed execution
 DOCKER_IMAGE = os.environ.get("DOCKER_IMAGE", "claude-agent:latest")
@@ -72,7 +74,7 @@ def update_task(task_id: int, progress_action: str = "", progress_details: str =
 
 
 def pick_next_task(tasks: list) -> dict | None:
-    pending = [t for t in tasks if t["status"] == "pending"]
+    pending = [t for t in tasks if t["status"] == "pending" and not t.get("blocked_on")]
     if not pending:
         return None
     return sorted(pending, key=lambda t: (PRIORITY_ORDER.get(t.get("priority", "medium"), 1), t["id"]))[0]
@@ -141,27 +143,109 @@ def parse_stream_json(raw: str) -> str:
     return raw  # fallback: return raw if nothing parsed
 
 
-def build_task_prompt(prompt: str) -> str:
-    """Wrap the user prompt with isolation instructions so CC ignores previous tasks."""
-    return (
+def build_plan_prompt(prompt: str, rejection_comments: list | None = None) -> str:
+    """
+    Build the plan-phase prompt, requiring CC to output a JSON decision.
+    rejection_comments: list of {"round": N, "comment": "..."} from prior rejections.
+    """
+    intro = (
+        "You are in the PLAN phase for a single task. "
+        "Do NOT reference previous tasks. Do NOT perform any file I/O. Read-only analysis only."
+    )
+
+    decomposition_rules = (
+        "=== DECOMPOSITION RULES ===\n"
+        "You MUST decide whether to execute this task directly or decompose it into subtasks.\n"
+        "\n"
+        "Choose DECOMPOSE if ANY of the following are true:\n"
+        "  - The task has more than one independent concern (things that can be done in parallel)\n"
+        "  - The task touches more than ~3 files or components\n"
+        "  - The outcome of step A determines how to do step B (sequential dependency)\n"
+        "  - The task would require switching context significantly mid-way\n"
+        "\n"
+        "Choose EXECUTE if ALL of the following are true:\n"
+        "  - The task is completable and verifiable in one focused session\n"
+        "  - The steps are known upfront with no conditional branching\n"
+        "  - The scope is narrow (1–3 files, single concern)\n"
+        "\n"
+        f"IMPORTANT: If this task is already at max depth (depth >= {MAX_SUB_TASK_DEPTH}), you MUST choose execute\n"
+        "regardless of size. Do not decompose further."
+    )
+
+    json_spec = (
+        "=== OUTPUT FORMAT ===\n"
+        "Output ONLY valid JSON — no preamble, no markdown fences, no explanation outside the JSON.\n"
+        "\n"
+        "For execute:\n"
+        '  {"decision": "execute", "reasoning": "why execute", "plan": "numbered step-by-step plan"}\n'
+        "\n"
+        "For decompose:\n"
+        '  {"decision": "decompose", "reasoning": "why decompose", "subtasks": [\n'
+        '    {"prompt": "full self-contained task description", "depends_on": []},\n'
+        '    {"prompt": "next subtask", "depends_on": [0]}\n'
+        "  ]}\n"
+        "\n"
+        "depends_on contains 0-based indices into the subtasks array (not task IDs).\n"
+        "Each subtask prompt must be fully self-contained — assume no shared context."
+    )
+
+    parts = [intro, decomposition_rules, json_spec]
+
+    if rejection_comments:
+        feedback_lines = [
+            f"Round {r['round']}: {r['comment']}"
+            for r in rejection_comments
+            if r.get("comment")
+        ]
+        if feedback_lines:
+            parts.append("=== PRIOR FEEDBACK FROM REVIEWER ===\n" + "\n".join(feedback_lines))
+
+    parts.append(f"=== TASK ===\n{prompt}")
+    return "\n\n".join(parts)
+
+
+def build_task_prompt(prompt: str, plan_text: str | None = None) -> str:
+    """Wrap the user prompt with isolation instructions. Injects approved plan if provided."""
+    parts = [
         "You are working on a SINGLE, INDEPENDENT task. "
         "Do NOT reference, read, or build upon any previous tasks, task history, "
         "PROGRESS.md entries, or prior task outputs. Treat this as a completely fresh request.\n\n"
         "If you create any output files (stories, text, code, etc.), save them in the "
-        "`agent_log/` directory, NOT in the project root.\n\n"
-        f"TASK:\n{prompt}"
-    )
+        "`agent_log/` directory, NOT in the project root."
+    ]
+    if plan_text:
+        parts.append(f"APPROVED PLAN:\n{plan_text}")
+    parts.append(f"TASK:\n{prompt}")
+    return "\n\n".join(parts)
+
+
+def parse_plan_decision(raw: str) -> dict:
+    """
+    Parse CC's plan-phase output as a JSON decision dict.
+    Strips markdown code fences; falls back to execute on any parse failure.
+    """
+    text = raw.strip()
+    fenced = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict) and obj.get("decision") in ("execute", "decompose"):
+            return obj
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return {"decision": "execute", "plan": raw}
 
 
 def run_cc_local(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     """
     Run Claude Code locally in plan mode (read-only, safe).
+    Caller is responsible for building the complete prompt.
     Returns (returncode, human-readable output text).
     """
-    isolated_prompt = build_task_prompt(prompt)
     model_id = MODEL_MAP.get(model, MODEL_MAP[DEFAULT_MODEL])
     cmd = [
-        "claude", "-p", isolated_prompt,
+        "claude", "-p", prompt,
         "--output-format", "stream-json", "--verbose",
         "--permission-mode", "plan",
         "--model", model_id,
@@ -186,12 +270,12 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
       1. CLAUDE_CODE_OAUTH_TOKEN env var — no file mounts needed
       2. ANTHROPIC_API_KEY env var — no file mounts needed
       3. Credential files — mounts ~/.claude and ~/.claude.json read-only
+    Caller is responsible for building the complete prompt.
     Returns (returncode, human-readable output text).
     """
-    isolated_prompt = build_task_prompt(prompt)
     model_id = MODEL_MAP.get(model, MODEL_MAP[DEFAULT_MODEL])
     cc_cmd = [
-        "claude", "-p", isolated_prompt,
+        "claude", "-p", prompt,
         "--output-format", "stream-json", "--verbose",
         "--dangerously-skip-permissions",
         "--model", model_id,
@@ -251,15 +335,33 @@ def git_commit(message: str) -> None:
         subprocess.run(["git", "commit", "-m", message], cwd=WORKSPACE, capture_output=True)
 
 
-def append_progress(task_id: int, summary: str) -> None:
-    """Legacy wrapper — writes a larger block for task completion."""
-    log_progress(task_id, "completed", summary or "")
+def on_task_complete(task_id: int) -> None:
+    """
+    Called when a task reaches `done`.
+    - Uses task.dependents (reverse index) to unblock dependents in O(d) — no full scan.
+    - Decrements unresolved_children on the parent task.
+    Both mutations run in a single locked_update for atomicity.
+    """
+    def mutate(data):
+        task_map = {t["id"]: t for t in data["tasks"]}
+        completed = task_map.get(task_id)
+        if completed is None:
+            return
 
+        # Unblock dependents using the stored reverse index
+        for dep_id in (completed.get("dependents") or []):
+            dep = task_map.get(dep_id)
+            if dep is not None:
+                dep["blocked_on"] = [x for x in (dep.get("blocked_on") or []) if x != task_id]
 
-def detect_decomposition(task_id: int) -> bool:
-    """Return True if CC wrote subtasks that reference this task as parent."""
-    data = load_tasks()
-    return any(t.get("parent") == task_id and t["status"] == "pending" for t in data["tasks"])
+        # Decrement parent's unresolved_children
+        parent_id = completed.get("parent")
+        if parent_id is not None:
+            parent = task_map.get(parent_id)
+            if parent is not None:
+                parent["unresolved_children"] = max(0, (parent.get("unresolved_children") or 1) - 1)
+
+    locked_update(mutate)
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +396,62 @@ def main() -> None:
             plan_task(task)
 
 
+def _approve_decompose(task_id: int, decision: dict, plan_json: str) -> None:
+    """Create subtasks for a decompose decision and mark the parent decomposed."""
+    def mutate(data):
+        task = next((t for t in data["tasks"] if t["id"] == task_id), None)
+        if task is None:
+            return
+
+        subtask_defs = decision.get("subtasks") or []
+        n = len(subtask_defs)
+        abs_ids = [next_id(data) for _ in range(n)]
+        now = datetime.now(timezone.utc).isoformat()
+
+        task["plan"] = plan_json
+
+        for i, s in enumerate(subtask_defs):
+            abs_depends = [abs_ids[j] for j in s.get("depends_on", []) if 0 <= j < n]
+            data["tasks"].append({
+                "id": abs_ids[i],
+                "status": "pending",
+                "prompt": s["prompt"],
+                "priority": task.get("priority", "medium"),
+                "plan_model": task.get("plan_model", DEFAULT_MODEL),
+                "exec_model": task.get("exec_model", DEFAULT_MODEL),
+                "auto_approve": task.get("auto_approve", False),
+                "parent": task_id,
+                "depth": (task.get("depth") or 0) + 1,
+                "depends_on": abs_depends,
+                "blocked_on": list(abs_depends),
+                "dependents": [],
+                "children": [],
+                "unresolved_children": 0,
+                "plan": None,
+                "report": None,
+                "created_at": now,
+                "completed_at": None,
+                "summary": None,
+                "rejection_comments": [],
+            })
+
+        task_map = {t["id"]: t for t in data["tasks"]}
+        for i, s in enumerate(subtask_defs):
+            for j in s.get("depends_on", []):
+                if 0 <= j < n:
+                    dep = task_map.get(abs_ids[j])
+                    if dep is not None:
+                        dep["dependents"].append(abs_ids[i])
+
+        task["status"] = "decomposed"
+        task["children"] = abs_ids
+        task["unresolved_children"] = n
+
+    locked_update(mutate)
+    log_progress(task_id, "plan auto-approved: decomposed",
+                 f"{len(decision.get('subtasks', []))} subtasks created")
+
+
 def plan_task(task: dict) -> None:
     """Run CC locally in plan mode, then set task to plan_review."""
     task_id = task["id"]
@@ -305,7 +463,9 @@ def plan_task(task: dict) -> None:
                 progress_details=task["prompt"][:80])
     try:
         plan_model = task.get("plan_model") or task.get("model", DEFAULT_MODEL)
-        _, plan_output = run_cc_local(task["prompt"], model=plan_model)
+        rejection_comments = task.get("rejection_comments") or []
+        plan_prompt = build_plan_prompt(task["prompt"], rejection_comments)
+        _, plan_output = run_cc_local(plan_prompt, model=plan_model)
     except subprocess.TimeoutExpired:
         update_task(task_id, status="stopped", stop_reason="timeout",
                     summary="Plan step timed out",
@@ -321,14 +481,31 @@ def plan_task(task: dict) -> None:
         time.sleep(TOKEN_BACKOFF_SECONDS)
         return
 
+    decision = parse_plan_decision(plan_output)
+
+    # Enforce max depth: cannot decompose at depth >= MAX_SUB_TASK_DEPTH
+    if decision["decision"] == "decompose" and (task.get("depth") or 0) >= MAX_SUB_TASK_DEPTH:
+        update_task(task_id, status="stopped", stop_reason="max_depth_reached",
+                    summary=f"Task reached max decomposition depth ({MAX_SUB_TASK_DEPTH}); cannot decompose further.",
+                    progress_action="stopped", progress_details="max_depth_reached")
+        print(f"[dispatcher] Task #{task_id} stopped: max_depth_reached.", flush=True)
+        return
+
+    plan_json = json.dumps(decision, indent=2)
+
     if task.get("auto_approve"):
-        update_task(task_id, status="in_progress", plan=plan_output,
-                    progress_action="plan auto-approved")
-        print(f"[dispatcher] Task #{task_id} plan auto-approved.", flush=True)
+        if decision["decision"] == "decompose":
+            _approve_decompose(task_id, decision, plan_json)
+            n = len(decision.get("subtasks") or [])
+            print(f"[dispatcher] Task #{task_id} plan auto-approved: decomposed into {n} subtasks.", flush=True)
+        else:
+            update_task(task_id, status="in_progress", plan=plan_json,
+                        progress_action="plan auto-approved")
+            print(f"[dispatcher] Task #{task_id} plan auto-approved (execute).", flush=True)
     else:
-        update_task(task_id, status="plan_review", plan=plan_output,
+        update_task(task_id, status="plan_review", plan=plan_json,
                     progress_action="plan ready for review")
-        print(f"[dispatcher] Task #{task_id} plan ready for review.", flush=True)
+        print(f"[dispatcher] Task #{task_id} plan ready for review ({decision['decision']}).", flush=True)
 
 
 def execute_task(task: dict) -> None:
@@ -336,12 +513,40 @@ def execute_task(task: dict) -> None:
     task_id = task["id"]
     print(f"[dispatcher] Executing task #{task_id}: {task['prompt'][:80]}", flush=True)
 
+    # Increment retry count and check for doom loop before doing any work.
+    retry_count = [0]
+
+    def bump_retry(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id:
+                t["retry_count"] = t.get("retry_count", 0) + 1
+                retry_count[0] = t["retry_count"]
+                break
+
+    locked_update(bump_retry)
+
+    if retry_count[0] > MAX_RETRIES:
+        update_task(task_id, status="stopped", stop_reason="loop_detected",
+                    summary=f"Task stopped after {retry_count[0] - 1} retries (MAX_RETRIES={MAX_RETRIES}).",
+                    progress_action="stopped", progress_details="loop_detected")
+        print(f"[dispatcher] Task #{task_id} loop detected after {retry_count[0] - 1} retries.", flush=True)
+        return
+
     write_status("running", f"Executing #{task_id}", task_id)
     update_task(task_id, status="in_progress",
                 progress_action="started execution")
     try:
         exec_model = task.get("exec_model") or task.get("model", DEFAULT_MODEL)
-        _, exec_output = run_cc_docker(task["prompt"], model=exec_model)
+        plan_text = None
+        try:
+            if task.get("plan"):
+                plan_decision = json.loads(task["plan"])
+                if plan_decision.get("decision") == "execute":
+                    plan_text = plan_decision.get("plan")
+        except (json.JSONDecodeError, TypeError):
+            pass
+        exec_prompt = build_task_prompt(task["prompt"], plan_text=plan_text)
+        _, exec_output = run_cc_docker(exec_prompt, model=exec_model)
     except subprocess.TimeoutExpired:
         update_task(task_id, status="stopped", stop_reason="timeout",
                     summary="Execution timed out",
@@ -357,18 +562,14 @@ def execute_task(task: dict) -> None:
         time.sleep(TOKEN_BACKOFF_SECONDS)
         return
 
-    if detect_decomposition(task_id):
-        update_task(task_id, status="decomposed",
-                    progress_action="decomposed into subtasks")
-        print(f"[dispatcher] Task #{task_id} decomposed into subtasks.", flush=True)
-    else:
-        now = datetime.now(timezone.utc).isoformat()
-        summary = exec_output[-2000:] if len(exec_output) > 2000 else exec_output
-        update_task(task_id, status="done", completed_at=now, summary=summary,
-                    progress_action="completed",
-                    progress_details=summary or "")
-        git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
-        print(f"[dispatcher] Task #{task_id} done.", flush=True)
+    now = datetime.now(timezone.utc).isoformat()
+    summary = exec_output[-2000:] if len(exec_output) > 2000 else exec_output
+    update_task(task_id, status="done", completed_at=now, summary=summary,
+                progress_action="completed",
+                progress_details=summary or "")
+    on_task_complete(task_id)
+    git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
+    print(f"[dispatcher] Task #{task_id} done.", flush=True)
 
 
 if __name__ == "__main__":

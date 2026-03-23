@@ -26,7 +26,7 @@ WEB_PID=$!
 
 # --- Dispatcher: restart whenever any .py file in agent/ changes ---
 py_checksum() {
-    find "$SCRIPT_DIR" -maxdepth 2 -name "*.py" | sort | xargs stat -f "%m %N" 2>/dev/null | md5
+    find "$SCRIPT_DIR" -maxdepth 2 -name "*.py" | sort | xargs stat -f "%m %N" 2>/dev/null | md5 -q
 }
 
 restart_dispatcher() {

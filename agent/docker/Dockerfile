@@ -23,8 +23,9 @@ RUN npm install -g @anthropic-ai/claude-code
 
 # Non-root user — Claude Code refuses --dangerously-skip-permissions as root
 ARG HOST_UID=501
-RUN useradd -m -s /bin/bash -u ${HOST_UID} agent
-RUN mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
+RUN useradd -m -s /bin/bash -u ${HOST_UID} agent \
+    && mkdir -p /home/agent/.claude \
+    && chown agent:agent /home/agent/.claude
 USER agent
 
 # This image is used as a sandboxed execution environment.

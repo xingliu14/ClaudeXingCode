@@ -143,3 +143,239 @@
 {"ts": "2026-03-21 13:10:08", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
 {"ts": "2026-03-21 13:10:08", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
 {"ts": "2026-03-21 13:10:08", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 00:05:38", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 00:05:38", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 00:05:38", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 00:05:38", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 00:05:38", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 00:05:38", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 00:05:38", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 00:05:38", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 00:06:17", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 00:06:17", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 00:06:17", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 00:06:17", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 00:06:17", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 00:06:17", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 00:06:17", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 00:06:17", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 16:51:37", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 16:51:37", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 16:51:37", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 16:51:37", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 16:51:37", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 16:51:37", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 16:51:37", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 16:51:37", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:05:18", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:05:18", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:05:18", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:05:18", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:05:18", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:05:18", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:05:18", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:05:18", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:10:58", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:10:58", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:10:58", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:10:58", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:10:58", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:10:58", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:10:58", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:10:58", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:13:40", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:13:40", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:13:40", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:13:40", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:13:40", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:13:40", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:13:40", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:13:40", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "stopped", "details": "max_depth_reached", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:24:39", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "stopped", "details": "max_depth_reached", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:30:28", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "stopped", "details": "max_depth_reached", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:31:40", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "stopped", "details": "max_depth_reached", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:34:30", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "stopped", "details": "max_depth_reached", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:40:04", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "stopped", "details": "max_depth_reached", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:43:02", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "stopped", "details": "max_depth_reached", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:47:53", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "stopped", "details": "max_depth_reached", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:51:35", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "stopped", "details": "max_depth_reached", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:56:59", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "stopped", "details": "max_depth_reached", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 17:57:10", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "stopped", "details": "max_depth_reached", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started planning", "details": "test", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "plan ready for review", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "stopped", "details": "loop_detected", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "stopped", "details": "loop_detected", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "started execution", "details": "", "detail_file": null}
+{"ts": "2026-03-22 18:05:01", "task_id": 1, "action": "completed", "details": "done", "detail_file": null}

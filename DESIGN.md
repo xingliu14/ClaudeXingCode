@@ -71,7 +71,7 @@ All fields coexist on a single task object; unused fields are null or empty.
 - `blocked_on` — **dynamic**, updated as blockers complete; empty = task is ready to run
 - `children` — list of direct child task ids; empty for leaf tasks
 - `unresolved_children` — count of children not yet `done`; triggers report generation when it reaches 0
-- `depth` — nesting level (root = 0). Max depth: 4
+- `depth` — nesting level (root = 0). Max depth: 9
 - `report` — final result summary, written once when `unresolved_children` reaches 0 (or task completes with no children)
 
 ### Plan Phase: Two Outcomes
@@ -165,7 +165,7 @@ completed subtree rolls its report up to the next level.
 
 ### Depth Limit
 
-Max decomposition depth is 4 levels. If a task at depth 4 is still too large,
+Max decomposition depth is 9 levels. If a task at depth 9 is still too large,
 it is stopped with `stop_reason: "max_depth_reached"` and surfaces in the Web UI
 for the user to refine manually.
 
@@ -437,3 +437,61 @@ Status values: `pending | in_progress | plan_review | push_review | done | stopp
 > the task back to `in_progress` (with a plan). Approving a `decompose` plan
 > sets the task to `decomposed` and creates subtasks. "failed" was renamed to
 > `stopped` with a `stop_reason` field.
+
+---
+
+## Web UI Design
+
+**Goal:** a monitoring + approval interface. Every screen answers: *"What is Ralph doing, and what needs my attention?"*
+
+### Board (/)
+
+Two visual zones:
+
+- **Pipeline** (left-to-right): Pending → Running → Plan Review → Push Review → Done
+- **Off-ramp** (below): Stopped, Decomposed
+
+**Human-attention columns (`plan_review`, `push_review`) are visually dominant:**
+- A persistent **"Action Required — N tasks need your review"** banner appears at the top of the board whenever either column is non-empty; it links directly to the first waiting task
+- The column itself has an amber background, amber top border, and a pulsing `⚑` flag in the header
+- Each card in these columns is rendered with an amber highlight and an **[Review →]** button directly on the card — no need to navigate to the detail page to know action is needed
+- The nav bar dispatcher dot also shows a count badge: `⚑ 2` when reviews are pending
+
+All other columns are visually neutral. The Done column collapses by default. Board auto-refreshes every 3s via AJAX without a full page reload.
+
+Each card shows: `#id prompt-preview · priority · P:model E:model · [blocked N] · [parent #X]`. Running tasks show elapsed time. Inline priority selector on every card (no page reload).
+
+### Task Detail (/tasks/\<id\>)
+
+Two-column layout on desktop, stacked on mobile:
+
+- **Left (60%)** — plan content. For `execute` plans: step-by-step reasoning. For `decompose` plans: proposed subtask tree with reasoning. Approve / Reject buttons directly below. Reject expands inline to a feedback field — no modal, no navigation.
+- **Right (40%)** — read-only metadata (priority, models, timestamps, depth, parent link) + subtask list with status icons.
+
+Subtask status icons: `✓ done · ⟳ running · ● review · ○ pending · ⊟ blocked(#id) · ⊘ stopped`
+
+### State-to-Color System
+
+| Status | Color | Signal |
+|---|---|---|
+| `pending` | indigo | queued |
+| `in_progress` | blue | Ralph is working |
+| `plan_review` | **amber** | **needs human** |
+| `push_review` | **amber** | **needs human** |
+| `decomposed` | purple | waiting on children |
+| `done` | green | complete |
+| `stopped` | red | needs attention |
+
+Amber = needs your eyes. Green = done. Red = something broke. Everything else can wait.
+
+### Artifact Rendering (Phase 12)
+
+| Type | Rendered as |
+|---|---|
+| `git_commit` | hash + commit message, links to git log |
+| `text` | inline blockquote |
+| `document` | collapsible `<details>` block, markdown rendered |
+| `code_diff` | syntax-highlighted diff, collapsible |
+| `url_list` | bulleted list with title, URL, and note |
+
+No charting libraries, no JS frameworks — plain HTML / CSS / vanilla JS throughout.

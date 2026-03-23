@@ -19,11 +19,14 @@ from datetime import date
 from email.message import EmailMessage
 from pathlib import Path
 
-TASKS_FILE = Path(os.environ.get("TASKS_FILE", "/agent/tasks.json"))
+_AGENT_DIR = Path(__file__).resolve().parent
+TASKS_FILE = Path(os.environ.get("TASKS_FILE", str(_AGENT_DIR.parent / "tasks.json")))
 
 
-def load_env_file(path: str = "/agent/.env") -> None:
+def load_env_file(path: str = "") -> None:
     """Load key=value pairs from .env into os.environ."""
+    if not path:
+        path = str(_AGENT_DIR / ".env")
     try:
         for line in Path(path).read_text().splitlines():
             line = line.strip()
@@ -37,7 +40,7 @@ def load_env_file(path: str = "/agent/.env") -> None:
 def build_body(tasks: list, today: str) -> str:
     done    = [t for t in tasks if t["status"] == "done"    and (t.get("completed_at") or "").startswith(today)]
     pending = [t for t in tasks if t["status"] == "pending"]
-    failed  = [t for t in tasks if t["status"] == "stopped"  and (t.get("completed_at") or (t.get("created_at") or "")).startswith(today)]
+    failed  = [t for t in tasks if t["status"] == "stopped"  and (t.get("completed_at") or t.get("created_at") or "").startswith(today)]
 
     lines = []
 
@@ -57,7 +60,7 @@ def build_body(tasks: list, today: str) -> str:
     lines.append("")
     lines.append(f"✗ Failed ({len(failed)}):")
     for t in failed:
-        reason = t.get("summary", "")
+        reason = (t.get("stop_reason") or t.get("summary") or "")[:80]
         lines.append(f"  #{t['id']} — {t['prompt'][:60]}{(' (' + reason + ')') if reason else ''}")
     if not failed:
         lines.append("  (none)")
@@ -82,11 +85,10 @@ def send_digest() -> None:
     data = json.loads(TASKS_FILE.read_text()) if TASKS_FILE.exists() else {"tasks": []}
     tasks = data["tasks"]
 
+    body = build_body(tasks, today)
     done_count    = sum(1 for t in tasks if t["status"] == "done"    and (t.get("completed_at") or "").startswith(today))
     pending_count = sum(1 for t in tasks if t["status"] == "pending")
-
     subject = f"Agent Daily Report — {done_count} done, {pending_count} pending [{today}]"
-    body = build_body(tasks, today)
 
     msg = EmailMessage()
     msg["Subject"] = subject

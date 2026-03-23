@@ -13,6 +13,7 @@ from pathlib import Path
 
 _DEFAULT_TASKS = str(Path(__file__).resolve().parent.parent.parent / "tasks.json")
 TASKS_FILE = Path(os.environ.get("TASKS_FILE", _DEFAULT_TASKS))
+STATUS_FILE = TASKS_FILE.parent / "agent_log" / "dispatcher_status.json"
 
 
 def load_tasks() -> dict:

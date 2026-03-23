@@ -1,0 +1,449 @@
+"""Tests for web_manager.py Flask routes."""
+
+import json
+import pytest
+import task_store
+import web_manager
+from helpers import write_tasks
+
+
+@pytest.fixture
+def web_client(tmp_path, monkeypatch):
+    """Flask test client with tasks.json and status file isolated in tmp_path."""
+    tf = tmp_path / "tasks.json"
+    write_tasks(tf, {"tasks": []})
+    monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+    monkeypatch.setattr(web_manager, "STATUS_FILE", tmp_path / "status.json")
+    web_manager.app.config["TESTING"] = True
+    with web_manager.app.test_client() as client:
+        yield client, tf
+
+
+class TestBoardRoute:
+    def test_returns_200(self, web_client):
+        client, _ = web_client
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert b"ClaudeXingCode Dashboard" in resp.data
+
+    def test_blocked_task_shows_blocked_badge(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [
+            {"id": 1, "status": "pending", "prompt": "Blocked task", "priority": "medium",
+             "blocked_on": [2]},
+            {"id": 2, "status": "pending", "prompt": "Blocker", "priority": "medium",
+             "blocked_on": []},
+        ]})
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert b"blocked 1" in resp.data
+
+    def test_unblocked_task_no_blocked_badge(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [
+            {"id": 1, "status": "pending", "prompt": "Free task", "priority": "medium",
+             "blocked_on": []},
+        ]})
+        resp = client.get("/")
+        assert b"blocked 1" not in resp.data
+
+
+class TestAddTaskRoute:
+    def test_creates_task(self, web_client):
+        client, tf = web_client
+        resp = client.post("/tasks", data={"prompt": "Fix the bug", "priority": "high"})
+        assert resp.status_code == 302
+
+        data = json.loads(tf.read_text())
+        assert len(data["tasks"]) == 1
+        task = data["tasks"][0]
+        assert task["id"] == 1
+        assert task["prompt"] == "Fix the bug"
+        assert task["priority"] == "high"
+        assert task["status"] == "pending"
+        assert task["plan_model"] == "sonnet"
+        assert task["exec_model"] == "sonnet"
+
+    def test_creates_task_full_schema(self, web_client):
+        client, tf = web_client
+        client.post("/tasks", data={"prompt": "Schema test", "priority": "medium"})
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["depth"] == 0
+        assert task["blocked_on"] == []
+        assert task["depends_on"] == []
+        assert task["dependents"] == []
+        assert task["children"] == []
+        assert task["unresolved_children"] == 0
+        assert task["report"] is None
+        assert task["parent"] is None
+
+    def test_creates_task_with_model(self, web_client):
+        client, tf = web_client
+        resp = client.post("/tasks", data={"prompt": "Think hard", "priority": "high", "model": "opus"})
+        assert resp.status_code == 302
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["plan_model"] == "opus"
+        assert task["exec_model"] == "opus"
+
+    def test_invalid_model_defaults_to_sonnet(self, web_client):
+        client, tf = web_client
+        resp = client.post("/tasks", data={"prompt": "Test", "priority": "medium", "model": "gpt4"})
+        assert resp.status_code == 302
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["plan_model"] == "sonnet"
+        assert task["exec_model"] == "sonnet"
+
+    def test_empty_prompt_no_task(self, web_client):
+        client, tf = web_client
+        resp = client.post("/tasks", data={"prompt": "  ", "priority": "medium"})
+        assert resp.status_code == 302
+        assert len(json.loads(tf.read_text())["tasks"]) == 0
+
+
+class TestTaskDetailRoute:
+    def test_returns_task(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "pending", "prompt": "Test task",
+                                    "priority": "medium", "parent": None, "plan": None,
+                                    "summary": None}]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"Test task" in resp.data
+
+    def test_404_not_found(self, web_client):
+        client, _ = web_client
+        resp = client.get("/tasks/999")
+        assert resp.status_code == 404
+
+    def test_subtask_blocked_on_shown_in_detail(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [
+            {"id": 1, "status": "decomposed", "prompt": "Parent", "priority": "medium",
+             "parent": None, "plan": None, "summary": None,
+             "children": [2, 3], "unresolved_children": 2},
+            {"id": 2, "status": "pending", "prompt": "First subtask", "priority": "medium",
+             "parent": 1, "blocked_on": []},
+            {"id": 3, "status": "pending", "prompt": "Second subtask", "priority": "medium",
+             "parent": 1, "blocked_on": [2]},
+        ]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"blocked by #2" in resp.data
+
+    def test_subtask_not_blocked_no_indicator(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [
+            {"id": 1, "status": "decomposed", "prompt": "Parent", "priority": "medium",
+             "parent": None, "plan": None, "summary": None,
+             "children": [2], "unresolved_children": 1},
+            {"id": 2, "status": "pending", "prompt": "Free subtask", "priority": "medium",
+             "parent": 1, "blocked_on": []},
+        ]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"blocked by" not in resp.data
+
+
+class TestApproveRoute:
+    def test_approves_plan_review_task(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "medium"}]})
+        resp = client.post("/tasks/1/approve")
+        assert resp.status_code == 302
+        assert json.loads(tf.read_text())["tasks"][0]["status"] == "in_progress"
+
+    def test_does_not_approve_non_plan_review(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "pending", "prompt": "x",
+                                    "priority": "medium"}]})
+        client.post("/tasks/1/approve")
+        assert json.loads(tf.read_text())["tasks"][0]["status"] == "pending"
+
+    def test_approve_execute_plan_sets_in_progress(self, web_client):
+        client, tf = web_client
+        plan = json.dumps({"decision": "execute", "plan": "1. do it"})
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "medium", "plan": plan, "depth": 0,
+                                    "children": [], "unresolved_children": 0}], "next_id": 2})
+        client.post("/tasks/1/approve")
+
+        result = json.loads(tf.read_text())
+        assert result["tasks"][0]["status"] == "in_progress"
+        assert len(result["tasks"]) == 1  # no subtasks created
+
+    def test_approve_decompose_sets_parent_decomposed(self, web_client):
+        client, tf = web_client
+        plan = json.dumps({"decision": "decompose", "subtasks": [
+            {"prompt": "A", "depends_on": []},
+            {"prompt": "B", "depends_on": []},
+        ]})
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "medium", "plan": plan, "depth": 0,
+                                    "plan_model": "sonnet", "exec_model": "sonnet",
+                                    "auto_approve": False,
+                                    "children": [], "unresolved_children": 0}], "next_id": 2})
+        client.post("/tasks/1/approve")
+
+        result = json.loads(tf.read_text())
+        parent = result["tasks"][0]
+        assert parent["status"] == "decomposed"
+        assert parent["unresolved_children"] == 2
+        assert len(parent["children"]) == 2
+
+    def test_approve_decompose_creates_subtasks_with_correct_schema(self, web_client):
+        client, tf = web_client
+        plan = json.dumps({"decision": "decompose", "subtasks": [
+            {"prompt": "do A", "depends_on": []},
+            {"prompt": "do B", "depends_on": [0]},
+        ]})
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "high", "plan": plan, "depth": 0,
+                                    "plan_model": "opus", "exec_model": "sonnet",
+                                    "auto_approve": False,
+                                    "children": [], "unresolved_children": 0}], "next_id": 2})
+        client.post("/tasks/1/approve")
+
+        result = json.loads(tf.read_text())
+        assert len(result["tasks"]) == 3
+
+        subtasks = [t for t in result["tasks"] if t.get("parent") == 1]
+        a = next(t for t in subtasks if t["prompt"] == "do A")
+        b = next(t for t in subtasks if t["prompt"] == "do B")
+
+        assert a["depth"] == 1
+        assert a["blocked_on"] == []
+        assert a["depends_on"] == []
+        assert a["priority"] == "high"
+        assert a["plan_model"] == "opus"
+        assert b["depends_on"] == [a["id"]]
+        assert b["blocked_on"] == [a["id"]]
+        assert b["id"] in a["dependents"]
+        assert b["dependents"] == []
+
+    def test_approve_decompose_inherits_parent_fields(self, web_client):
+        client, tf = web_client
+        plan = json.dumps({"decision": "decompose", "subtasks": [
+            {"prompt": "sub", "depends_on": []}
+        ]})
+        write_tasks(tf, {"tasks": [{"id": 5, "status": "plan_review", "prompt": "parent",
+                                    "priority": "high", "plan": plan, "depth": 1,
+                                    "plan_model": "opus", "exec_model": "haiku",
+                                    "auto_approve": True,
+                                    "children": [], "unresolved_children": 0}], "next_id": 10})
+        client.post("/tasks/5/approve")
+
+        result = json.loads(tf.read_text())
+        sub = next(t for t in result["tasks"] if t.get("parent") == 5)
+        assert sub["depth"] == 2
+        assert sub["priority"] == "high"
+        assert sub["plan_model"] == "opus"
+        assert sub["exec_model"] == "haiku"
+        assert sub["auto_approve"] is True
+        assert sub["id"] == 10
+
+
+class TestRejectRoute:
+    def test_rejects_sets_pending(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "medium", "plan": "old plan"}]})
+        resp = client.post("/tasks/1/reject", data={"feedback": "Bad plan"})
+        assert resp.status_code == 302
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["status"] == "pending"
+        assert "stop_reason" not in task
+
+    def test_rejects_clears_plan(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "medium", "plan": "old plan"}]})
+        client.post("/tasks/1/reject", data={"feedback": ""})
+        assert json.loads(tf.read_text())["tasks"][0]["plan"] is None
+
+    def test_rejects_appends_rejection_comment(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "medium", "plan": "p"}]})
+        client.post("/tasks/1/reject", data={"feedback": "Please decompose"})
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["rejection_comments"] == [{"round": 1, "comment": "Please decompose"}]
+
+    def test_rejects_increments_round(self, web_client):
+        client, tf = web_client
+        existing = [{"round": 1, "comment": "first rejection"}]
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "medium", "plan": "p",
+                                    "rejection_comments": existing}]})
+        client.post("/tasks/1/reject", data={"feedback": "still bad"})
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert len(task["rejection_comments"]) == 2
+        assert task["rejection_comments"][1] == {"round": 2, "comment": "still bad"}
+
+    def test_rejects_without_feedback_appends_empty_comment(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "medium", "plan": "p"}]})
+        client.post("/tasks/1/reject", data={"feedback": ""})
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["rejection_comments"] == [{"round": 1, "comment": ""}]
+
+
+class TestCancelRoute:
+    def test_cancels_in_progress(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "in_progress", "prompt": "x",
+                                    "priority": "medium"}]})
+        resp = client.post("/tasks/1/cancel")
+        assert resp.status_code == 302
+
+        result = json.loads(tf.read_text())
+        assert result["tasks"][0]["status"] == "stopped"
+        assert result["tasks"][0]["stop_reason"] == "cancelled"
+
+
+class TestRetryRoute:
+    def test_requeues_stopped_task(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "stopped", "prompt": "x",
+                                    "priority": "medium", "stop_reason": "rejected",
+                                    "summary": "old", "plan": "old plan"}]})
+        resp = client.post("/tasks/1/retry")
+        assert resp.status_code == 302
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["status"] == "pending"
+        assert task["summary"] is None
+        assert task["plan"] is None
+        assert "stop_reason" not in task
+
+    def test_retry_clears_rejection_comments(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "stopped", "prompt": "x",
+                                    "priority": "medium", "plan": None,
+                                    "rejection_comments": [{"round": 1, "comment": "bad"}]}]})
+        client.post("/tasks/1/retry")
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["rejection_comments"] == []
+
+
+class TestDeleteRoute:
+    def test_deletes_non_running_task(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "pending", "prompt": "x"}]})
+        resp = client.post("/tasks/1/delete")
+        assert resp.status_code == 302
+        assert len(json.loads(tf.read_text())["tasks"]) == 0
+
+    def test_does_not_delete_in_progress(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "in_progress", "prompt": "x"}]})
+        client.post("/tasks/1/delete")
+        assert len(json.loads(tf.read_text())["tasks"]) == 1
+
+
+class TestSetModelRoute:
+    def test_changes_plan_model(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "medium", "plan_model": "sonnet",
+                                    "exec_model": "sonnet"}]})
+        resp = client.post("/tasks/1/set-model", data={"plan_model": "opus", "exec_model": "sonnet"})
+        assert resp.status_code == 302
+
+        result = json.loads(tf.read_text())
+        assert result["tasks"][0]["plan_model"] == "opus"
+        assert result["tasks"][0]["exec_model"] == "sonnet"
+
+    def test_changes_exec_model(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "medium", "plan_model": "sonnet",
+                                    "exec_model": "sonnet"}]})
+        resp = client.post("/tasks/1/set-model", data={"plan_model": "sonnet", "exec_model": "opus"})
+        assert resp.status_code == 302
+
+        result = json.loads(tf.read_text())
+        assert result["tasks"][0]["plan_model"] == "sonnet"
+        assert result["tasks"][0]["exec_model"] == "opus"
+
+    def test_changes_both_models(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "pending", "prompt": "x",
+                                    "priority": "medium", "plan_model": "sonnet",
+                                    "exec_model": "sonnet"}]})
+        resp = client.post("/tasks/1/set-model", data={"plan_model": "haiku", "exec_model": "opus"})
+        assert resp.status_code == 302
+
+        result = json.loads(tf.read_text())
+        assert result["tasks"][0]["plan_model"] == "haiku"
+        assert result["tasks"][0]["exec_model"] == "opus"
+
+    def test_ignores_invalid_model(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "pending", "prompt": "x",
+                                    "priority": "medium", "plan_model": "sonnet",
+                                    "exec_model": "sonnet"}]})
+        client.post("/tasks/1/set-model", data={"plan_model": "gpt4", "exec_model": "gpt4"})
+
+        result = json.loads(tf.read_text())
+        assert result["tasks"][0]["plan_model"] == "sonnet"
+        assert result["tasks"][0]["exec_model"] == "sonnet"
+
+    def test_works_on_any_status(self, web_client):
+        client, tf = web_client
+        for status in ("pending", "plan_review", "done", "stopped"):
+            write_tasks(tf, {"tasks": [{"id": 1, "status": status, "prompt": "x",
+                                        "plan_model": "sonnet", "exec_model": "sonnet"}]})
+            client.post("/tasks/1/set-model", data={"plan_model": "opus", "exec_model": "haiku"})
+
+            result = json.loads(tf.read_text())
+            assert result["tasks"][0]["plan_model"] == "opus"
+            assert result["tasks"][0]["exec_model"] == "haiku"
+
+
+class TestEditTaskModels:
+    def test_edit_updates_both_models(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "pending", "prompt": "x",
+                                    "priority": "medium", "plan_model": "sonnet",
+                                    "exec_model": "sonnet"}]})
+        client.post("/tasks/1/edit", data={
+            "prompt": "updated", "priority": "high",
+            "plan_model": "opus", "exec_model": "haiku"
+        })
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["plan_model"] == "opus"
+        assert task["exec_model"] == "haiku"
+        assert task["priority"] == "high"
+
+    def test_edit_blocked_for_in_progress(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "in_progress", "prompt": "x",
+                                    "priority": "medium", "plan_model": "sonnet",
+                                    "exec_model": "sonnet"}]})
+        client.post("/tasks/1/edit", data={
+            "prompt": "updated", "priority": "high",
+            "plan_model": "opus", "exec_model": "opus"
+        })
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["plan_model"] == "sonnet"  # unchanged
+        assert task["exec_model"] == "sonnet"
+
+
+class TestStatusRoute:
+    def test_returns_idle_when_no_file(self, web_client):
+        client, _ = web_client
+        resp = client.get("/status")
+        assert resp.status_code == 200
+        assert resp.get_json()["state"] == "idle"

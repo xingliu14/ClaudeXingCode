@@ -30,7 +30,7 @@ sys.path.insert(0, str(_AGENT_DIR / "core"))
 
 from flask import Flask, redirect, render_template_string, request, url_for, jsonify
 from progress_logger import log_progress
-from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE
+from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE, STATUS_FILE
 
 _DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent.parent)
 WORKSPACE = Path(os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE))
@@ -143,6 +143,7 @@ BOARD_HTML = """
     .badge-low { background: #dcfce7; color: #166534; }
     .badge-model { background: #e0e7ff; color: #3730a3; }
     .badge-auto { background: #d1fae5; color: #065f46; }
+    .badge-blocked { background: #fde68a; color: #92400e; }
     .reason-tag { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
                   font-size: 0.65rem; font-weight: 600; background: #fecaca; color: #991b1b; }
     .pushed-tag { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
@@ -220,6 +221,7 @@ BOARD_HTML = """
         <span class="badge badge-model">E:{{ t.get('exec_model', t.get('model','sonnet')) }}</span>
         {% if t.get('auto_approve') %}<span class="badge badge-auto">auto</span>{% endif %}
         {% if t.get('parent') %}<span>&middot; #{{ t.parent }}</span>{% endif %}
+        {% if t.get('blocked_on') %}<span class="badge badge-blocked">blocked {{ t.blocked_on|length }}</span>{% endif %}
         {% if t.get('pushed_at') %}<span class="pushed-tag">pushed</span>{% endif %}
         {% if t.get('hidden') %}
         <form method="post" action="/tasks/{{ t.id }}/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>
@@ -317,6 +319,7 @@ BOARD_HTML = """
     meta += '<span class="badge badge-model">E:' + execModel + '</span>';
     if (t.auto_approve) meta += '<span class="badge badge-auto">auto</span>';
     if (t.parent) meta += '<span>&middot; #' + t.parent + '</span>';
+    if (t.blocked_on && t.blocked_on.length) meta += '<span class="badge badge-blocked">blocked ' + t.blocked_on.length + '</span>';
     if (t.pushed_at) meta += '<span class="pushed-tag">pushed</span>';
     if (t.stop_reason) meta += '<span class="reason-tag">' + esc(t.stop_reason) + '</span>';
     const hideAction = t.hidden
@@ -611,6 +614,7 @@ DETAIL_HTML = """
   {% for s in subtasks %}
   <div class="subtask-item">
     <a href="/tasks/{{ s.id }}">#{{ s.id }}</a> [{{ s.status }}] {{ s.prompt[:80] }}
+    {% if s.get('blocked_on') %}<span class="badge badge-blocked" style="margin-left:0.3rem">blocked by #{{ s.blocked_on|join(', #') }}</span>{% endif %}
   </div>
   {% endfor %}
 </div>
@@ -709,6 +713,20 @@ LOG_HTML = """
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _read_dispatcher_status() -> dict:
+    """Read dispatcher status from file, falling back to idle."""
+    if STATUS_FILE.exists():
+        try:
+            return json.loads(STATUS_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"state": "idle", "label": "Idle"}
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -757,10 +775,18 @@ def add_task():
             "exec_model": model,
             "auto_approve": auto_approve,
             "parent": None,
+            "depth": 0,
+            "blocked_on": [],
+            "depends_on": [],
+            "dependents": [],
+            "children": [],
+            "unresolved_children": 0,
             "plan": None,
+            "report": None,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "completed_at": None,
             "summary": None,
+            "rejection_comments": [],
         }
         data["tasks"].append(task)
         new_task.update(task)
@@ -869,10 +895,63 @@ def delete_task(task_id: int):
 @app.post("/tasks/<int:task_id>/approve")
 def approve_task(task_id: int):
     def mutate(data):
-        for t in data["tasks"]:
-            if t["id"] == task_id and t["status"] == "plan_review":
-                t["status"] = "in_progress"
-                break
+        task = next((t for t in data["tasks"] if t["id"] == task_id), None)
+        if task is None or task["status"] != "plan_review":
+            return
+
+        decision = {}
+        try:
+            if task.get("plan"):
+                decision = json.loads(task["plan"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        if decision.get("decision") == "decompose":
+            subtask_defs = decision.get("subtasks") or []
+            n = len(subtask_defs)
+            abs_ids = [next_id(data) for _ in range(n)]
+            now = datetime.now(timezone.utc).isoformat()
+
+            # First pass: create all subtask records
+            for i, s in enumerate(subtask_defs):
+                abs_depends = [abs_ids[j] for j in s.get("depends_on", []) if 0 <= j < n]
+                data["tasks"].append({
+                    "id": abs_ids[i],
+                    "status": "pending",
+                    "prompt": s["prompt"],
+                    "priority": task.get("priority", "medium"),
+                    "plan_model": task.get("plan_model", "sonnet"),
+                    "exec_model": task.get("exec_model", "sonnet"),
+                    "auto_approve": task.get("auto_approve", False),
+                    "parent": task_id,
+                    "depth": (task.get("depth") or 0) + 1,
+                    "depends_on": abs_depends,
+                    "blocked_on": list(abs_depends),
+                    "dependents": [],
+                    "children": [],
+                    "unresolved_children": 0,
+                    "plan": None,
+                    "report": None,
+                    "created_at": now,
+                    "completed_at": None,
+                    "summary": None,
+                    "rejection_comments": [],
+                })
+
+            # Second pass: wire reverse index — for each dependency, record who depends on it
+            task_map = {t["id"]: t for t in data["tasks"]}
+            for i, s in enumerate(subtask_defs):
+                for j in s.get("depends_on", []):
+                    if 0 <= j < n:
+                        dep_task = task_map.get(abs_ids[j])
+                        if dep_task is not None:
+                            dep_task["dependents"].append(abs_ids[i])
+
+            task["status"] = "decomposed"
+            task["children"] = abs_ids
+            task["unresolved_children"] = n
+        else:
+            task["status"] = "in_progress"
 
     locked_update(mutate)
     log_progress(task_id, "plan approved")
@@ -881,15 +960,19 @@ def approve_task(task_id: int):
 
 @app.post("/tasks/<int:task_id>/reject")
 def reject_task(task_id: int):
-    feedback = request.form.get("feedback", "")
+    feedback = request.form.get("feedback", "").strip()
 
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id and t["status"] == "plan_review":
-                t["status"] = "stopped"
-                t["stop_reason"] = "rejected"
-                if feedback:
-                    t["summary"] = f"Rejected: {feedback}"
+                comments = t.get("rejection_comments") or []
+                comments.append({
+                    "round": len(comments) + 1,
+                    "comment": feedback,
+                })
+                t["rejection_comments"] = comments
+                t["status"] = "pending"
+                t["plan"] = None
                 break
 
     locked_update(mutate)
@@ -921,6 +1004,7 @@ def retry_task(task_id: int):
                 t["completed_at"] = None
                 t["summary"] = None
                 t["plan"] = None
+                t["rejection_comments"] = []
                 t.pop("stop_reason", None)
                 t.pop("pushed_at", None)
                 break
@@ -1010,14 +1094,7 @@ def git_log():
 def api_tasks():
     """Return all tasks as JSON for live polling."""
     data = load_tasks()
-    status_file = TASKS_FILE.parent / "agent_log" / "dispatcher_status.json"
-    dispatcher = {"state": "idle", "label": "Idle"}
-    if status_file.exists():
-        try:
-            dispatcher = json.loads(status_file.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    return jsonify({"tasks": data["tasks"], "dispatcher": dispatcher})
+    return jsonify({"tasks": data["tasks"], "dispatcher": _read_dispatcher_status()})
 
 
 @app.get("/status")
@@ -1027,13 +1104,7 @@ def dispatcher_status():
     The dispatcher writes its state to a small JSON file so the Web UI can
     display it.  If the file doesn't exist we report "idle".
     """
-    status_file = TASKS_FILE.parent / "agent_log" / "dispatcher_status.json"
-    if status_file.exists():
-        try:
-            return jsonify(json.loads(status_file.read_text()))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return jsonify({"state": "idle", "label": "Idle"})
+    return jsonify(_read_dispatcher_status())
 
 
 # ---------------------------------------------------------------------------

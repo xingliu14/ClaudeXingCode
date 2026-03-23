@@ -1,10 +1,10 @@
 """
-Shared progress logging — writes timestamped entries to PROGRESS.md.
+Shared progress logging — writes timestamped entries to agent_log/agent_log.md.
 
-Entries are stored in a JSON-lines file (progress_entries.jsonl) for easy
-re-rendering.  PROGRESS.md is rebuilt on each write: newest first, grouped
-by task.  If details exceed 120 chars, the full text is saved to
-progress/task_<id>_<timestamp>.txt and only a short summary is kept inline.
+Entries are stored in agent_log/entries.jsonl for easy re-rendering.
+agent_log.md is rebuilt on each write: newest first, grouped by task.
+If details exceed 120 chars, the full text is saved to
+agent_log/task_<id>_<timestamp>.txt and only a short summary is kept inline.
 """
 
 import json
@@ -19,17 +19,21 @@ ENTRIES_FILE = WORKSPACE / "agent_log" / "entries.jsonl"
 DETAILS_DIR = WORKSPACE / "agent_log"
 
 MAX_INLINE_LEN = 120
+MAX_INLINE_PREVIEW = MAX_INLINE_LEN - 20  # chars to show before "... → <file>"
 
 # Map action keywords to stage labels for readability
 ACTION_STAGE = {
     "created": "PENDING",
     "edited": "PENDING",
     "requeued (retry)": "PENDING",
+    "plan rejected": "PENDING",
+    "token limit hit during planning": "PENDING",
+    "token limit hit during execution": "PENDING",
     "started planning": "RUNNING",
     "started execution": "RUNNING",
     "plan approved": "RUNNING",
+    "plan auto-approved": "RUNNING",
     "plan ready for review": "REVIEW PLAN",
-    "plan rejected": "STOPPED",
     "stopped": "STOPPED",
     "cancelled by user": "STOPPED",
     "completed": "DONE",
@@ -37,6 +41,7 @@ ACTION_STAGE = {
     "push skipped": "DONE",
     "deleted": "DELETED",
     "decomposed into subtasks": "DECOMPOSED",
+    "plan auto-approved: decomposed": "DECOMPOSED",
 }
 
 
@@ -52,19 +57,18 @@ def log_progress(task_id: int | None, action: str, details: str = "") -> None:
     # whose details exceed MAX_INLINE_LEN. Each file is written once and never
     # read back by the system; they exist purely for human reference.
     if details and len(details) > MAX_INLINE_LEN:
-        DETAILS_DIR.mkdir(exist_ok=True)
         safe_ts = ts.replace(" ", "_").replace(":", "")
         fname = f"task_{task_id}_{safe_ts}.txt" if task_id else f"general_{safe_ts}.txt"
         detail_file = DETAILS_DIR / fname
         detail_file.write_text(details)
-        short_details = details[:100].replace("\n", " ") + f"... → {fname}"
+        short_details = details[:MAX_INLINE_PREVIEW].replace("\n", " ") + f"... → {fname}"
 
     entry = {
         "ts": ts,
         "task_id": task_id,
         "action": action,
         "details": short_details,
-        "detail_file": str(detail_file.name) if detail_file else None,
+        "detail_file": detail_file.name if detail_file else None,
     }
 
     # Append to JSONL store
