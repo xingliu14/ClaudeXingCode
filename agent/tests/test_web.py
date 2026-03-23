@@ -9,7 +9,12 @@ from helpers import write_tasks
 
 @pytest.fixture
 def web_client(tmp_path, monkeypatch):
-    """Flask test client with tasks.json and status file isolated in tmp_path."""
+    """Flask test client with tasks.json and status file isolated in tmp_path.
+
+    Yields (client, tf) where tf is the tmp tasks.json path.
+    All routes read/write through task_store.TASKS_FILE, so pointing it at
+    tmp_path gives each test a fresh, isolated data store.
+    """
     tf = tmp_path / "tasks.json"
     write_tasks(tf, {"tasks": []})
     monkeypatch.setattr(task_store, "TASKS_FILE", tf)
@@ -20,6 +25,8 @@ def web_client(tmp_path, monkeypatch):
 
 
 class TestBoardRoute:
+    """GET / — the main dashboard page that lists all tasks."""
+
     def test_returns_200(self, web_client):
         client, _ = web_client
         resp = client.get("/")
@@ -49,6 +56,8 @@ class TestBoardRoute:
 
 
 class TestAddTaskRoute:
+    """POST /tasks — create a new task from the web form."""
+
     def test_creates_task(self, web_client):
         client, tf = web_client
         resp = client.post("/tasks", data={"prompt": "Fix the bug", "priority": "high"})
@@ -148,6 +157,10 @@ class TestTaskDetailRoute:
 
 
 class TestApproveRoute:
+    """POST /tasks/<id>/approve — two code paths:
+    'execute' decision sets status to in_progress,
+    'decompose' decision creates subtasks and sets parent to 'decomposed'."""
+
     def test_approves_plan_review_task(self, web_client):
         client, tf = web_client
         write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
@@ -195,6 +208,9 @@ class TestApproveRoute:
         assert len(parent["children"]) == 2
 
     def test_approve_decompose_creates_subtasks_with_correct_schema(self, web_client):
+        """Subtask B depends_on [0] (positional index of A). The approve route
+        maps positional indices to real task IDs in depends_on, blocked_on,
+        and the reverse index (dependents)."""
         client, tf = web_client
         plan = json.dumps({"decision": "decompose", "subtasks": [
             {"prompt": "do A", "depends_on": []},
@@ -247,6 +263,8 @@ class TestApproveRoute:
 
 
 class TestRejectRoute:
+    """POST /tasks/<id>/reject — resets to pending, clears plan, appends feedback."""
+
     def test_rejects_sets_pending(self, web_client):
         client, tf = web_client
         write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
@@ -297,6 +315,8 @@ class TestRejectRoute:
 
 
 class TestCancelRoute:
+    """Cancel is allowed from both in_progress and plan_review states."""
+
     def test_cancels_in_progress(self, web_client):
         client, tf = web_client
         write_tasks(tf, {"tasks": [{"id": 1, "status": "in_progress", "prompt": "x",
@@ -308,13 +328,34 @@ class TestCancelRoute:
         assert result["tasks"][0]["status"] == "stopped"
         assert result["tasks"][0]["stop_reason"] == "cancelled"
 
+    def test_cancels_plan_review(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
+                                    "priority": "medium", "plan": "some plan"}]})
+        client.post("/tasks/1/cancel")
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["status"] == "stopped"
+        assert task["stop_reason"] == "cancelled"
+
+    def test_ignores_pending(self, web_client):
+        """Cancel should not affect tasks that aren't in_progress or plan_review."""
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "pending", "prompt": "x",
+                                    "priority": "medium"}]})
+        client.post("/tasks/1/cancel")
+        assert json.loads(tf.read_text())["tasks"][0]["status"] == "pending"
+
 
 class TestRetryRoute:
+    """Retry is allowed from both stopped and done states — resets all execution state."""
+
     def test_requeues_stopped_task(self, web_client):
         client, tf = web_client
         write_tasks(tf, {"tasks": [{"id": 1, "status": "stopped", "prompt": "x",
                                     "priority": "medium", "stop_reason": "rejected",
-                                    "summary": "old", "plan": "old plan"}]})
+                                    "summary": "old", "plan": "old plan",
+                                    "retry_count": 3}]})
         resp = client.post("/tasks/1/retry")
         assert resp.status_code == 302
 
@@ -323,6 +364,23 @@ class TestRetryRoute:
         assert task["summary"] is None
         assert task["plan"] is None
         assert "stop_reason" not in task
+        # retry_count must reset to 0, otherwise a doom-looped task that retries
+        # would immediately hit the MAX_RETRIES guard again on next execution.
+        assert task["retry_count"] == 0
+
+    def test_requeues_done_task(self, web_client):
+        """Done tasks can also be retried (e.g., user wants a second attempt)."""
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "done", "prompt": "x",
+                                    "priority": "medium", "summary": "completed",
+                                    "plan": "old plan", "completed_at": "2026-03-23",
+                                    "retry_count": 1}]})
+        client.post("/tasks/1/retry")
+
+        task = json.loads(tf.read_text())["tasks"][0]
+        assert task["status"] == "pending"
+        assert task["completed_at"] is None
+        assert task["retry_count"] == 0
 
     def test_retry_clears_rejection_comments(self, web_client):
         client, tf = web_client
@@ -334,8 +392,18 @@ class TestRetryRoute:
         task = json.loads(tf.read_text())["tasks"][0]
         assert task["rejection_comments"] == []
 
+    def test_retry_ignores_pending(self, web_client):
+        """Retry should not affect tasks that aren't stopped or done."""
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "pending", "prompt": "x",
+                                    "priority": "medium"}]})
+        client.post("/tasks/1/retry")
+        assert json.loads(tf.read_text())["tasks"][0]["status"] == "pending"
+
 
 class TestDeleteRoute:
+    """POST /tasks/<id>/delete — removes a task unless it's in_progress (safety guard)."""
+
     def test_deletes_non_running_task(self, web_client):
         client, tf = web_client
         write_tasks(tf, {"tasks": [{"id": 1, "status": "pending", "prompt": "x"}]})
@@ -351,6 +419,9 @@ class TestDeleteRoute:
 
 
 class TestSetModelRoute:
+    """POST /tasks/<id>/set-model — updates plan_model and/or exec_model.
+    Invalid model names are silently ignored (original value preserved)."""
+
     def test_changes_plan_model(self, web_client):
         client, tf = web_client
         write_tasks(tf, {"tasks": [{"id": 1, "status": "plan_review", "prompt": "x",
@@ -411,6 +482,8 @@ class TestSetModelRoute:
 
 
 class TestEditTaskModels:
+    """POST /tasks/<id>/edit — edit prompt, priority, and models (blocked while in_progress)."""
+
     def test_edit_updates_both_models(self, web_client):
         client, tf = web_client
         write_tasks(tf, {"tasks": [{"id": 1, "status": "pending", "prompt": "x",

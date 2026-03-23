@@ -25,6 +25,7 @@ WORKSPACE = os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE)
 TOKEN_BACKOFF_SECONDS = int(os.environ.get("TOKEN_BACKOFF_SECONDS", "3600"))
 MAX_SUB_TASK_DEPTH = int(os.environ.get("MAX_SUB_TASK_DEPTH", "9"))
 MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
+TIMEOUT_SECONDS = int(os.environ.get("TIMEOUT_SECONDS", "3600"))
 
 # Docker settings for sandboxed execution
 DOCKER_IMAGE = os.environ.get("DOCKER_IMAGE", "claude-agent:latest")
@@ -62,6 +63,12 @@ def write_status(state: str, label: str, task_id: int | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 def update_task(task_id: int, progress_action: str = "", progress_details: str = "", **kwargs) -> None:
+    """Atomically update a task's fields and optionally log the change.
+
+    Uses locked_update for the file mutation, then appends to the progress log
+    outside the lock. The two operations are NOT atomic with each other — if the
+    process crashes between them the task changes but the log entry is lost.
+    This is acceptable: the progress log is informational only."""
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id:
@@ -74,6 +81,9 @@ def update_task(task_id: int, progress_action: str = "", progress_details: str =
 
 
 def pick_next_task(tasks: list) -> dict | None:
+    """Pick the highest-priority pending task that isn't blocked.
+    Sorts by (priority rank, id) so high-priority tasks run first,
+    and ties are broken by lowest id (oldest task first)."""
     pending = [t for t in tasks if t["status"] == "pending" and not t.get("blocked_on")]
     if not pending:
         return None
@@ -101,7 +111,12 @@ TOKEN_LIMIT_PATTERNS = [
 
 
 def is_token_limit_error(output: str) -> bool:
-    """Check if CC output indicates a token/rate limit error."""
+    """Check if CC output indicates a token/rate limit error.
+
+    Uses case-insensitive substring matching against TOKEN_LIMIT_PATTERNS.
+    False positives are theoretically possible (e.g., a task about "rate limit
+    design") but haven't been observed in practice. The consequence of a false
+    positive is a harmless backoff-and-retry, not data loss."""
     lower = output.lower()
     return any(p in lower for p in TOKEN_LIMIT_PATTERNS)
 
@@ -113,8 +128,9 @@ def is_token_limit_error(output: str) -> bool:
 def parse_stream_json(raw: str) -> str:
     """
     Extract human-readable text from Claude Code's stream-json output.
-    Prefers the top-level 'result' field; falls back to collecting
-    all assistant text blocks in order.
+
+    CC's --output-format stream-json emits one JSON object per line.
+    Priority: 'result' object (final answer) > concatenated assistant text blocks > raw string.
     """
     text_blocks = []
     result_text = None
@@ -128,9 +144,11 @@ def parse_stream_json(raw: str) -> str:
         except json.JSONDecodeError:
             continue
 
+        # The 'result' object appears at the end of the stream with the final answer
         if obj.get("type") == "result" and obj.get("result"):
             result_text = obj["result"]
 
+        # Collect intermediate assistant messages as a fallback
         if obj.get("type") == "assistant":
             for block in obj.get("message", {}).get("content", []):
                 if block.get("type") == "text" and block.get("text"):
@@ -222,7 +240,9 @@ def build_task_prompt(prompt: str, plan_text: str | None = None) -> str:
 def parse_plan_decision(raw: str) -> dict:
     """
     Parse CC's plan-phase output as a JSON decision dict.
-    Strips markdown code fences; falls back to execute on any parse failure.
+    Strips markdown code fences; falls back to a synthetic 'execute' decision
+    with the raw output as the plan if JSON parsing fails. This ensures the
+    dispatcher always has a valid decision to act on.
     """
     text = raw.strip()
     fenced = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
@@ -257,7 +277,7 @@ def run_cc_local(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
         cwd=WORKSPACE,
         capture_output=True,
         text=True,
-        timeout=3600,
+        timeout=TIMEOUT_SECONDS,
     )
     raw = result.stdout + result.stderr
     return result.returncode, parse_stream_json(raw)
@@ -281,6 +301,10 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
         "--model", model_id,
     ]
 
+    # Auth priority: OAuth token > API key > credential file mounts.
+    # Tokens are passed as env vars to Docker (-e), which means they're visible
+    # in `ps` output. Acceptable for a personal Mac setup; a production system
+    # should use Docker secrets or --env-file.
     oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
@@ -306,7 +330,7 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
         docker_cmd,
         capture_output=True,
         text=True,
-        timeout=3600,
+        timeout=TIMEOUT_SECONDS,
     )
     raw = result.stdout + result.stderr
     return result.returncode, parse_stream_json(raw)
@@ -317,7 +341,13 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
 # ---------------------------------------------------------------------------
 
 def git_commit(message: str) -> None:
-    """Run git add + commit inside Docker so file ownership stays consistent."""
+    """Run git add + commit inside Docker so file ownership stays consistent.
+
+    Best-effort: silently succeeds if there are no changes to commit.
+    Falls back to local git if Docker fails (e.g., image not available)."""
+    # Standard POSIX single-quote escaping: replace ' with '\'' (end quote,
+    # escaped literal quote, start new quote). Safe against command injection
+    # because single-quoted strings in bash don't expand $() or backticks.
     safe_msg = message.replace("'", "'\\''")
     git_cmd = f"git add -A && git commit -m '{safe_msg}'"
     docker_cmd = [
@@ -337,10 +367,15 @@ def git_commit(message: str) -> None:
 
 def on_task_complete(task_id: int) -> None:
     """
-    Called when a task reaches `done`.
-    - Uses task.dependents (reverse index) to unblock dependents in O(d) — no full scan.
-    - Decrements unresolved_children on the parent task.
+    Called when a task reaches `done`. Propagates completion through the dependency graph:
+    1. Removes this task from `blocked_on` of sibling tasks that depend on it,
+       potentially unblocking them for the dispatcher to pick up next iteration.
+    2. Decrements `unresolved_children` on the parent task.
+
     Both mutations run in a single locked_update for atomicity.
+
+    NOTE: Per DESIGN.md, when unresolved_children reaches 0 a parent report should
+    be generated — this is not yet implemented (TODO).
     """
     def mutate(data):
         task_map = {t["id"]: t for t in data["tasks"]}
@@ -348,18 +383,19 @@ def on_task_complete(task_id: int) -> None:
         if completed is None:
             return
 
-        # Unblock dependents using the stored reverse index
+        # Unblock dependents: 'dependents' is a reverse index built during decomposition
+        # in _approve_decompose(). Each entry is a sibling task that listed us in depends_on.
         for dep_id in (completed.get("dependents") or []):
             dep = task_map.get(dep_id)
             if dep is not None:
                 dep["blocked_on"] = [x for x in (dep.get("blocked_on") or []) if x != task_id]
 
-        # Decrement parent's unresolved_children
+        # Decrement parent's child counter — when this reaches 0, all subtasks are done
         parent_id = completed.get("parent")
         if parent_id is not None:
             parent = task_map.get(parent_id)
             if parent is not None:
-                parent["unresolved_children"] = max(0, (parent.get("unresolved_children") or 1) - 1)
+                parent["unresolved_children"] = max(0, parent.get("unresolved_children", 0) - 1)
 
     locked_update(mutate)
 
@@ -369,7 +405,11 @@ def on_task_complete(task_id: int) -> None:
 # ---------------------------------------------------------------------------
 
 def pick_actionable_task(tasks: list) -> dict | None:
-    """Pick the next task to act on: approved tasks first, then pending."""
+    """Pick the next task to act on: approved tasks first, then pending.
+
+    Priority order ensures approved work (human already reviewed) is never
+    starved by incoming pending tasks. This is the single scheduling entry
+    point called by the main loop — all routing decisions flow from here."""
     approved = pick_approved_task(tasks)
     if approved:
         return approved
@@ -377,6 +417,13 @@ def pick_actionable_task(tasks: list) -> dict | None:
 
 
 def main() -> None:
+    """Main dispatcher loop — polls tasks.json and drives the plan/execute cycle.
+
+    Each iteration: load tasks -> pick highest-priority actionable task -> route it.
+    Routing: tasks with an approved plan go to execute_task (Docker);
+    tasks without a plan go to plan_task (local, read-only).
+    Sleeps 60s when no actionable tasks are found to avoid busy-waiting.
+    """
     print("[dispatcher] Ralph Loop starting...", flush=True)
     write_status("idle", "Idle")
 
@@ -389,7 +436,11 @@ def main() -> None:
             time.sleep(60)
             continue
 
-        # Approved tasks → execute; pending tasks → plan first
+        # Route based on task state: approved tasks (in_progress + plan) go straight
+        # to execution in Docker; pending tasks need a plan first (local, read-only).
+        # Note: `task` is a snapshot from this iteration's load_tasks() — the web UI
+        # could modify the task between here and the subprocess start, but the window
+        # is small and the consequences are benign (e.g., planning a just-cancelled task).
         if task["status"] == "in_progress" and task.get("plan"):
             execute_task(task)
         else:
@@ -397,7 +448,14 @@ def main() -> None:
 
 
 def _approve_decompose(task_id: int, decision: dict, plan_json: str) -> None:
-    """Create subtasks for a decompose decision and mark the parent decomposed."""
+    """Create subtasks for a decompose decision and mark the parent decomposed.
+
+    Two-pass approach:
+      Pass 1 — Allocate absolute IDs for all subtasks, create task objects with
+               forward dependencies (depends_on, blocked_on).
+      Pass 2 — Build the reverse dependency index (dependents) so on_task_complete
+               can efficiently unblock siblings without scanning all tasks.
+    """
     def mutate(data):
         task = next((t for t in data["tasks"] if t["id"] == task_id), None)
         if task is None:
@@ -405,11 +463,13 @@ def _approve_decompose(task_id: int, decision: dict, plan_json: str) -> None:
 
         subtask_defs = decision.get("subtasks") or []
         n = len(subtask_defs)
+        # Pre-allocate IDs so we can resolve relative indices -> absolute IDs
         abs_ids = [next_id(data) for _ in range(n)]
         now = datetime.now(timezone.utc).isoformat()
 
         task["plan"] = plan_json
 
+        # Pass 1: create subtask objects with forward dependency links
         for i, s in enumerate(subtask_defs):
             abs_depends = [abs_ids[j] for j in s.get("depends_on", []) if 0 <= j < n]
             data["tasks"].append({
@@ -435,6 +495,8 @@ def _approve_decompose(task_id: int, decision: dict, plan_json: str) -> None:
                 "rejection_comments": [],
             })
 
+        # Pass 2: build reverse index — for each dependency edge A->B,
+        # record B in A's 'dependents' list so completing A can unblock B
         task_map = {t["id"]: t for t in data["tasks"]}
         for i, s in enumerate(subtask_defs):
             for j in s.get("depends_on", []):
@@ -453,7 +515,15 @@ def _approve_decompose(task_id: int, decision: dict, plan_json: str) -> None:
 
 
 def plan_task(task: dict) -> None:
-    """Run CC locally in plan mode, then set task to plan_review."""
+    """Run CC locally in plan mode, then route based on the decision.
+
+    Flow: run CC (read-only) -> parse JSON decision -> route:
+      - auto_approve + decompose: create subtasks immediately
+      - auto_approve + execute:   set in_progress with plan (ready for execute_task)
+      - manual:                   set plan_review (wait for human in Web UI)
+    On token limit: reset to pending and sleep for backoff.
+    On timeout: mark stopped.
+    """
     task_id = task["id"]
     print(f"[dispatcher] Planning task #{task_id}: {task['prompt'][:80]}", flush=True)
 
@@ -509,11 +579,18 @@ def plan_task(task: dict) -> None:
 
 
 def execute_task(task: dict) -> None:
-    """Run CC in Docker to execute an approved task."""
+    """Run CC in Docker to execute an approved task.
+
+    Retry guard: each call increments retry_count BEFORE execution.
+    If retry_count exceeds MAX_RETRIES the task is stopped as a doom-loop.
+    Note: the first real execution has retry_count=1, so MAX_RETRIES=3
+    allows 3 attempts total (retry_count 1, 2, 3 pass; 4 triggers stop).
+    """
     task_id = task["id"]
     print(f"[dispatcher] Executing task #{task_id}: {task['prompt'][:80]}", flush=True)
 
-    # Increment retry count and check for doom loop before doing any work.
+    # Increment retry count atomically before doing any work.
+    # Uses a mutable container to extract the value from the locked_update closure.
     retry_count = [0]
 
     def bump_retry(data):
@@ -554,7 +631,12 @@ def execute_task(task: dict) -> None:
         return
 
     if is_token_limit_error(exec_output):
-        update_task(task_id, status="pending",
+        # Keep status as in_progress with plan intact (not pending) so the approved
+        # plan is preserved. On the next iteration, pick_approved_task will route
+        # directly back to execute_task, skipping the plan phase entirely.
+        # Compare with plan_task's token limit handling, which resets to pending
+        # because there's no approved plan to preserve.
+        update_task(task_id, status="in_progress",
                     progress_action="token limit hit during execution",
                     progress_details="will retry after backoff")
         write_status("sleeping", "Token limit — backing off")

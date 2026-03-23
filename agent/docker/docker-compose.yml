@@ -2,12 +2,14 @@
 # The dispatcher and web manager run locally; only task execution
 # uses this Docker image via `docker run --rm`.
 #
-# Usage (run from agent/docker/):
-#   docker compose build        # rebuild the image
+# Usage:
+#   docker compose -f agent/docker/docker-compose.yml build
 #
+# The build context is agent/ (parent of this file's directory).
+# The dockerfile path is relative to that context.
 services:
   agent:
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
     image: claude-agent:latest

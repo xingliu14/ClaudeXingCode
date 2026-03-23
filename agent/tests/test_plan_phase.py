@@ -11,101 +11,127 @@ from helpers import write_tasks
 
 
 class TestParsePlanDecision:
+    """parse_plan_decision must handle: valid JSON, code-fenced JSON, free-text fallback.
+    Unrecognised decisions fall back to execute with the raw text as the plan."""
     def test_valid_execute_decision(self):
-raw = '{"decision": "execute", "reasoning": "simple", "plan": "1. do it"}'
+        raw = '{"decision": "execute", "reasoning": "simple", "plan": "1. do it"}'
         result = parse_plan_decision(raw)
         assert result["decision"] == "execute"
         assert result["plan"] == "1. do it"
 
     def test_valid_decompose_decision(self):
-raw = '{"decision": "decompose", "reasoning": "big", "subtasks": [{"prompt": "step 1", "depends_on": []}]}'
+        raw = '{"decision": "decompose", "reasoning": "big", "subtasks": [{"prompt": "step 1", "depends_on": []}]}'
         result = parse_plan_decision(raw)
         assert result["decision"] == "decompose"
         assert len(result["subtasks"]) == 1
 
     def test_strips_json_fence(self):
-raw = '```json\n{"decision": "execute", "plan": "do it"}\n```'
+        raw = '```json\n{"decision": "execute", "plan": "do it"}\n```'
         result = parse_plan_decision(raw)
         assert result["decision"] == "execute"
 
     def test_strips_plain_fence(self):
-raw = '```\n{"decision": "execute", "plan": "do it"}\n```'
+        raw = '```\n{"decision": "execute", "plan": "do it"}\n```'
         result = parse_plan_decision(raw)
         assert result["decision"] == "execute"
 
     def test_falls_back_on_invalid_json(self):
-raw = "I think we should do X then Y"
+        raw = "I think we should do X then Y"
         result = parse_plan_decision(raw)
         assert result["decision"] == "execute"
         assert result["plan"] == raw
 
     def test_falls_back_on_unknown_decision(self):
-raw = '{"decision": "unknown", "plan": "do it"}'
+        raw = '{"decision": "unknown", "plan": "do it"}'
+        result = parse_plan_decision(raw)
+        assert result["decision"] == "execute"
+        assert result["plan"] == raw
+
+    def test_falls_back_on_json_array(self):
+        """Valid JSON that isn't a dict (e.g. a list) should fall back to execute.
+        Guards the isinstance(obj, dict) check in parse_plan_decision."""
+        raw = '[1, 2, 3]'
         result = parse_plan_decision(raw)
         assert result["decision"] == "execute"
         assert result["plan"] == raw
 
 
 class TestBuildPlanPrompt:
+    """build_plan_prompt assembles the plan-phase prompt with decomposition rules,
+    JSON output spec, optional rejection feedback, and the task itself."""
+
     def test_includes_task_prompt(self):
-result = build_plan_prompt("Write a story")
+        result = build_plan_prompt("Write a story")
         assert "Write a story" in result
 
     def test_includes_decision_criteria(self):
-result = build_plan_prompt("Do X")
+        result = build_plan_prompt("Do X")
         assert "decompose" in result
         assert "execute" in result
 
     def test_includes_json_spec(self):
-result = build_plan_prompt("Do X")
+        result = build_plan_prompt("Do X")
         assert '"decision"' in result
         assert "JSON" in result
 
     def test_includes_all_decompose_criteria(self):
-result = build_plan_prompt("Do X")
+        result = build_plan_prompt("Do X")
         assert "independent concern" in result
         assert "~3 files" in result
         assert "step A" in result
         assert "max depth" in result
 
     def test_includes_execute_criteria(self):
-result = build_plan_prompt("Do X")
+        result = build_plan_prompt("Do X")
         assert "one focused session" in result
 
     def test_includes_rejection_comments(self):
-comments = [{"round": 1, "comment": "Please break this into smaller parts"}]
+        comments = [{"round": 1, "comment": "Please break this into smaller parts"}]
         result = build_plan_prompt("Do X", rejection_comments=comments)
         assert "Please break this into smaller parts" in result
         assert "PRIOR FEEDBACK" in result
 
     def test_no_rejection_comments_by_default(self):
-result = build_plan_prompt("Do X")
+        result = build_plan_prompt("Do X")
         assert "PRIOR FEEDBACK" not in result
 
     def test_skips_empty_comments(self):
-comments = [{"round": 1, "comment": ""}]
+        comments = [{"round": 1, "comment": ""}]
         result = build_plan_prompt("Do X", rejection_comments=comments)
         assert "PRIOR FEEDBACK" not in result
 
 
 class TestBuildTaskPrompt:
+    """build_task_prompt wraps the user prompt with isolation instructions and
+    optionally injects the approved plan. Falsy plan_text (None or '') is omitted."""
+
     def test_without_plan(self):
-result = build_task_prompt("Do the thing")
+        result = build_task_prompt("Do the thing")
         assert "Do the thing" in result
         assert "APPROVED PLAN" not in result
 
     def test_with_plan_injects_section(self):
-result = build_task_prompt("Do the thing", plan_text="1. step one\n2. step two")
+        result = build_task_prompt("Do the thing", plan_text="1. step one\n2. step two")
         assert "APPROVED PLAN:" in result
         assert "1. step one" in result
         assert result.index("APPROVED PLAN") < result.index("TASK:")
 
     def test_none_plan_omits_section(self):
-result = build_task_prompt("Do X", plan_text=None)
+        result = build_task_prompt("Do X", plan_text=None)
+        assert "APPROVED PLAN" not in result
+
+    def test_empty_plan_text_omits_section(self):
+        """Empty string is falsy in Python — should behave like None, not inject
+        an empty APPROVED PLAN section."""
+        result = build_task_prompt("Do X", plan_text="")
         assert "APPROVED PLAN" not in result
 
 
 class TestExecuteTaskPlanInjection:
+    """Verify that execute_task extracts the plan from the JSON decision stored in
+    task["plan"] and passes it to the Docker subprocess as part of the -p prompt.
+    Only "execute" decisions inject a plan; "decompose" and unparseable strings do not."""
+
     def test_injects_execute_plan_into_prompt(self, tmp_path, monkeypatch):
         tf = tmp_path / "tasks.json"
         plan = json.dumps({"decision": "execute", "reasoning": "small", "plan": "1. do it\n2. done"})
@@ -123,6 +149,7 @@ class TestExecuteTaskPlanInjection:
 
         dispatcher.execute_task(task)
 
+        # Extract the prompt from the Docker command: find -p flag, next arg is the text.
         docker_call = mock_run.call_args_list[0][0][0]
         p_idx = docker_call.index("-p")
         prompt_sent = docker_call[p_idx + 1]
@@ -174,6 +201,8 @@ class TestExecuteTaskPlanInjection:
 
 
 class TestMaxDepth:
+    """Depth guard: tasks at or beyond MAX_SUB_TASK_DEPTH are stopped, not decomposed."""
+
     def _decompose_mock(self):
         decompose_json = json.dumps({"decision": "decompose", "subtasks": [
             {"prompt": "s", "depends_on": []}
@@ -185,9 +214,6 @@ class TestMaxDepth:
         ))
 
     def test_stops_decompose_at_max_depth(self, tmp_path, monkeypatch):
-        import dispatcher
-        import task_store
-
         monkeypatch.setattr(dispatcher, "MAX_SUB_TASK_DEPTH", 3)
         tf = tmp_path / "tasks.json"
         task = {"id": 1, "status": "pending", "prompt": "test",
@@ -205,9 +231,6 @@ class TestMaxDepth:
         assert t["stop_reason"] == "max_depth_reached"
 
     def test_executes_normally_below_max_depth(self, tmp_path, monkeypatch):
-        import dispatcher
-        import task_store
-
         monkeypatch.setattr(dispatcher, "MAX_SUB_TASK_DEPTH", 3)
         tf = tmp_path / "tasks.json"
         task = {"id": 1, "status": "pending", "prompt": "test",
@@ -228,10 +251,19 @@ class TestMaxDepth:
         assert dispatcher.MAX_SUB_TASK_DEPTH == 9
 
     def test_max_depth_env_override(self, monkeypatch):
+        """Verify MAX_SUB_TASK_DEPTH can be overridden via env var.
+        importlib.reload mutates the module in-place — monkeypatch.setattr
+        can't properly undo that (it would restore to 5, not 9). The try/finally
+        ensures we always re-reload with the env var removed, even if the assert
+        fails — without this, a failing assert would leave the module poisoned
+        at depth=5 for all subsequent tests."""
         monkeypatch.setenv("MAX_SUB_TASK_DEPTH", "5")
         importlib.reload(dispatcher)
-        assert dispatcher.MAX_SUB_TASK_DEPTH == 5
-        monkeypatch.setattr(dispatcher, "MAX_SUB_TASK_DEPTH", 9)  # restore — reload persists across tests
+        try:
+            assert dispatcher.MAX_SUB_TASK_DEPTH == 5
+        finally:
+            monkeypatch.delenv("MAX_SUB_TASK_DEPTH", raising=False)
+            importlib.reload(dispatcher)
 
 
 class TestAutoApproveDecompose:
@@ -314,6 +346,9 @@ class TestAutoApproveDecompose:
             assert s["auto_approve"] is True
 
     def test_auto_approve_decompose_wires_dependency(self, tmp_path, monkeypatch):
+        """The mock returns subtask B with depends_on: [0] — meaning it depends on
+        the 0th subtask (A). Verify the dispatcher maps that positional index to
+        real task IDs in both depends_on and blocked_on."""
         tf = tmp_path / "tasks.json"
         task = {"id": 1, "status": "pending", "prompt": "test",
                 "plan_model": "sonnet", "exec_model": "sonnet",

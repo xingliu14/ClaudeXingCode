@@ -9,6 +9,11 @@ from helpers import write_tasks
 
 
 class TestOnTaskComplete:
+    """on_task_complete propagates a task's completion through the dependency graph:
+    1. Removes the task from blocked_on of its listed dependents (reverse index).
+    2. Decrements unresolved_children on the parent task.
+    Both mutations happen in a single locked_update for atomicity."""
+
     def test_clears_blocked_on_for_dependents(self, tmp_path, monkeypatch):
         tf = tmp_path / "tasks.json"
         data = {"tasks": [
@@ -80,6 +85,41 @@ class TestOnTaskComplete:
         assert tasks[2]["blocked_on"] == []   # in dependents — unblocked
         assert tasks[3]["blocked_on"] == [1]  # not in dependents — untouched
 
+    def test_nonexistent_task_is_noop(self, tmp_path, monkeypatch):
+        """Completing a task_id that doesn't exist in tasks.json must be a silent no-op."""
+        tf = tmp_path / "tasks.json"
+        write_tasks(tf, {"tasks": [
+            {"id": 1, "status": "pending", "parent": None, "blocked_on": [999]},
+        ]})
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+
+        dispatcher.on_task_complete(999)  # task 999 doesn't exist
+
+        tasks = json.loads(tf.read_text())["tasks"]
+        assert tasks[0]["blocked_on"] == [999]  # nothing changed
+
+    def test_unblocks_dependents_and_decrements_parent(self, tmp_path, monkeypatch):
+        """The most common real case: a subtask that has both dependents (siblings
+        waiting on it) and a parent (whose unresolved_children counter needs decrementing).
+        Both must happen in the same locked_update call."""
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            {"id": 1, "status": "decomposed", "unresolved_children": 2,
+             "children": [2, 3]},
+            {"id": 2, "status": "done", "parent": 1,
+             "dependents": [3], "blocked_on": []},
+            {"id": 3, "status": "pending", "parent": 1,
+             "dependents": [], "blocked_on": [2]},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+
+        dispatcher.on_task_complete(2)
+
+        tasks = {t["id"]: t for t in json.loads(tf.read_text())["tasks"]}
+        assert tasks[3]["blocked_on"] == []          # sibling unblocked
+        assert tasks[1]["unresolved_children"] == 1  # parent decremented
+
     def test_backward_compat_missing_dependents_field(self, tmp_path, monkeypatch):
         """Tasks without `dependents` (old schema) must not crash on_task_complete."""
         tf = tmp_path / "tasks.json"
@@ -104,6 +144,8 @@ class TestDependencyGraphIntegration:
     def test_full_dependency_cycle(self, tmp_path, monkeypatch):
         tf = tmp_path / "tasks.json"
         monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(web_manager, "STATUS_FILE", tmp_path / "status.json")
+
         # Parent task at plan_review with a decompose plan: A then B (B depends on A)
         plan = json.dumps({"decision": "decompose", "subtasks": [
             {"prompt": "do A", "depends_on": []},
@@ -133,10 +175,11 @@ class TestDependencyGraphIntegration:
         assert a["blocked_on"] == [] and a["dependents"] == [b["id"]]
         assert b["blocked_on"] == [a["id"]] and b["dependents"] == []
 
-        # Step 2: pick_next_task respects blocked_on
+        # Step 2: pick_next_task respects blocked_on — only A is pickable
         all_tasks = list(tasks.values())
         picked = dispatcher.pick_next_task(all_tasks)
         assert picked["id"] == a["id"]
+        # B alone is not pickable (blocked_on is non-empty)
         assert dispatcher.pick_next_task(
             [t for t in all_tasks if t["id"] == b["id"]]
         ) is None
@@ -148,7 +191,10 @@ class TestDependencyGraphIntegration:
         assert tasks[b["id"]]["blocked_on"] == []
         assert tasks[1]["unresolved_children"] == 1
 
-        # Step 4: pick_next_task now picks B
+        # Step 4: pick_next_task now picks B.
+        # Mark A as done in the in-memory dict (not the file) since pick_next_task
+        # takes a list argument — it doesn't read from disk. The file still has
+        # A's original status; only blocked_on was updated by on_task_complete.
         tasks[a["id"]]["status"] = "done"
         picked2 = dispatcher.pick_next_task(list(tasks.values()))
         assert picked2["id"] == b["id"]

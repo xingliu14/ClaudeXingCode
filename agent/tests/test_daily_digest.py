@@ -9,6 +9,9 @@ from daily_digest import load_env_file, build_body
 
 
 class TestLoadEnvFile:
+    """load_env_file parses .env files into os.environ using setdefault.
+    Key behaviors: strips quotes, skips comments/blanks, never overrides existing vars."""
+
     def test_loads_vars(self, tmp_path, monkeypatch):
         env_file = tmp_path / ".env"
         env_file.write_text("FOO=bar\nBAZ=qux\n")
@@ -29,11 +32,36 @@ class TestLoadEnvFile:
 
         assert os.environ["KEY"] == "val"
 
+    def test_strips_double_quotes(self, tmp_path, monkeypatch):
+        """SMTP_PASSWORD="secret" should yield 'secret', not '"secret"'."""
+        env_file = tmp_path / ".env"
+        env_file.write_text('SMTP_PASSWORD="my secret"\nSMTP_HOST=\'quoted\'\n')
+        monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+        monkeypatch.delenv("SMTP_HOST", raising=False)
+
+        load_env_file(str(env_file))
+
+        assert os.environ["SMTP_PASSWORD"] == "my secret"
+        assert os.environ["SMTP_HOST"] == "quoted"
+
+    def test_setdefault_does_not_override(self, tmp_path, monkeypatch):
+        """Existing env vars must win over .env file values."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("EXISTING_VAR=from_file\n")
+        monkeypatch.setenv("EXISTING_VAR", "from_env")
+
+        load_env_file(str(env_file))
+
+        assert os.environ["EXISTING_VAR"] == "from_env"
+
     def test_handles_missing_file(self):
         load_env_file("/nonexistent/path/.env")  # should not raise
 
 
 class TestBuildBody:
+    """build_body produces three sections: Completed (today only), Pending (all),
+    Failed (all stopped). Stopped tasks show stop_reason when available."""
+
     def test_formats_sections(self):
         today = "2026-02-27"
         tasks = [
@@ -50,6 +78,31 @@ class TestBuildBody:
         assert "Failed (1):" in body
         assert "#3" in body
 
+    def test_excludes_done_tasks_from_other_days(self):
+        """Only tasks completed today appear in the Completed section."""
+        today = "2026-03-23"
+        tasks = [
+            {"id": 1, "status": "done", "prompt": "Today", "completed_at": f"{today}T10:00:00"},
+            {"id": 2, "status": "done", "prompt": "Yesterday", "completed_at": "2026-03-22T23:59:00"},
+        ]
+        body = build_body(tasks, today)
+
+        assert "#1" in body
+        assert "#2" not in body
+        assert "Completed (1):" in body
+
+    def test_shows_stop_reason_in_failed_section(self):
+        """Failed tasks display their stop_reason in parentheses."""
+        today = "2026-03-23"
+        tasks = [
+            {"id": 1, "status": "stopped", "prompt": "Broken task",
+             "stop_reason": "loop_detected", "created_at": f"{today}T08:00:00"},
+        ]
+        body = build_body(tasks, today)
+
+        assert "loop_detected" in body
+        assert "#1" in body
+
     def test_empty_lists(self):
         body = build_body([], "2026-02-27")
         assert "(none)" in body
@@ -59,6 +112,9 @@ class TestBuildBody:
 
 
 class TestSendDigest:
+    """send_digest loads credentials, builds the email body, and delivers via SMTP.
+    Silently skips if SMTP_USER or SMTP_PASSWORD are missing."""
+
     def test_skips_without_credentials(self, tmp_path, monkeypatch):
         tf = tmp_path / "tasks.json"
         tf.write_text(json.dumps({"tasks": []}))

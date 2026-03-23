@@ -627,6 +627,10 @@ DETAIL_HTML = """
   const TASK_ID = {{ task.id }};
   let lastStatus = '{{ task.status }}';
 
+  function esc(s) {
+    const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+  }
+
   function poll() {
     fetch('/api/tasks').then(r => r.json()).then(function(data) {
       const task = data.tasks.find(t => t.id === TASK_ID);
@@ -641,7 +645,7 @@ DETAIL_HTML = """
       if (el && d) {
         const dot = d.state || 'idle';
         const label = d.label || dot;
-        el.innerHTML = '<span class="status-dot status-' + dot + '"></span><span style="color:#ccc;font-size:0.8rem">' + label + '</span>';
+        el.innerHTML = '<span class="status-dot status-' + dot + '"></span><span style="color:#ccc;font-size:0.8rem">' + esc(label) + '</span>';
       }
     }).catch(() => {});
     setTimeout(poll, POLL_MS);
@@ -754,10 +758,15 @@ def board():
 
 @app.post("/tasks")
 def add_task():
+    """Create a new task with a full schema — all fields initialized upfront.
+    This ensures the dispatcher, dependency graph, and web UI never encounter
+    missing keys. Uses locked_update + next_id for atomic ID allocation."""
     prompt = request.form.get("prompt", "").strip()
     priority = request.form.get("priority", "medium")
     model = request.form.get("model", "sonnet")
     auto_approve = request.form.get("auto_approve") == "1"
+    if priority not in ("high", "medium", "low"):
+        priority = "medium"
     if model not in ("sonnet", "opus", "haiku"):
         model = "sonnet"
     if not prompt:
@@ -808,6 +817,8 @@ def task_detail(task_id: int):
 
 @app.post("/tasks/<int:task_id>/edit")
 def edit_task(task_id: int):
+    """Edit a task's prompt, priority, and models. Blocked for in_progress tasks
+    to avoid mutating a task the dispatcher is actively running."""
     prompt = request.form.get("prompt", "").strip()
     priority = request.form.get("priority", "medium")
     plan_model = request.form.get("plan_model", "sonnet")
@@ -817,6 +828,8 @@ def edit_task(task_id: int):
     if exec_model not in ("sonnet", "opus", "haiku"):
         exec_model = "sonnet"
 
+    changed = [False]
+
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id and t["status"] != "in_progress":
@@ -825,10 +838,12 @@ def edit_task(task_id: int):
                 t["priority"] = priority
                 t["plan_model"] = plan_model
                 t["exec_model"] = exec_model
+                changed[0] = True
                 break
 
     locked_update(mutate)
-    log_progress(task_id, "edited", f"priority={priority}, plan={plan_model}, exec={exec_model}")
+    if changed[0]:
+        log_progress(task_id, "edited", f"priority={priority}, plan={plan_model}, exec={exec_model}")
     return redirect(url_for("task_detail", task_id=task_id))
 
 
@@ -884,16 +899,29 @@ def set_model(task_id: int):
 
 @app.post("/tasks/<int:task_id>/delete")
 def delete_task(task_id: int):
+    """Delete a task unless it's currently in_progress (safety guard).
+    Uses a closure flag to only log if the task was actually removed — this
+    pattern prevents phantom log entries from stale form resubmissions."""
+    deleted = [False]
+
     def mutate(data):
+        before = len(data["tasks"])
         data["tasks"] = [t for t in data["tasks"] if t["id"] != task_id or t["status"] == "in_progress"]
+        deleted[0] = len(data["tasks"]) < before
 
     locked_update(mutate)
-    log_progress(task_id, "deleted")
+    if deleted[0]:
+        log_progress(task_id, "deleted")
     return redirect(url_for("board"))
 
 
 @app.post("/tasks/<int:task_id>/approve")
 def approve_task(task_id: int):
+    """Approve a plan that's in review. Two outcomes:
+    - 'execute' decision: set task back to in_progress (dispatcher picks it up for Docker execution)
+    - 'decompose' decision: create subtasks, set parent to 'decomposed'
+    NOTE: The decompose logic here mirrors dispatcher._approve_decompose — keep in sync.
+    """
     def mutate(data):
         task = next((t for t in data["tasks"] if t["id"] == task_id), None)
         if task is None or task["status"] != "plan_review":
@@ -960,6 +988,10 @@ def approve_task(task_id: int):
 
 @app.post("/tasks/<int:task_id>/reject")
 def reject_task(task_id: int):
+    """Reject a plan and send it back for re-planning.
+    Clears the plan, appends the rejection feedback to the task's history,
+    and resets status to 'pending'. The dispatcher will re-plan with the
+    accumulated rejection comments as additional context for the model."""
     feedback = request.form.get("feedback", "").strip()
 
     def mutate(data):
@@ -982,6 +1014,9 @@ def reject_task(task_id: int):
 
 @app.post("/tasks/<int:task_id>/cancel")
 def cancel_task(task_id: int):
+    """Stop an active task. Only applies to in_progress or plan_review — the
+    dispatcher may be mid-execution when this fires, but the status change
+    prevents it from being picked up again on the next iteration."""
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id and t["status"] in ("in_progress", "plan_review"):
@@ -997,6 +1032,11 @@ def cancel_task(task_id: int):
 
 @app.post("/tasks/<int:task_id>/retry")
 def retry_task(task_id: int):
+    """Requeue a stopped or done task back to pending for a fresh attempt.
+    Clears all execution state so the task starts clean: plan, summary,
+    rejection history, stop reason, retry count, and push timestamp.
+    Critical: retry_count must be reset to 0 or the doom loop guard in
+    execute_task will incorrectly count prior attempts against the new run."""
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id and t["status"] in ("stopped", "done"):
@@ -1005,6 +1045,7 @@ def retry_task(task_id: int):
                 t["summary"] = None
                 t["plan"] = None
                 t["rejection_comments"] = []
+                t["retry_count"] = 0
                 t.pop("stop_reason", None)
                 t.pop("pushed_at", None)
                 break
@@ -1092,7 +1133,10 @@ def git_log():
 
 @app.get("/api/tasks")
 def api_tasks():
-    """Return all tasks as JSON for live polling."""
+    """Return all tasks + dispatcher status as JSON for live AJAX polling.
+    The board and detail pages poll this endpoint every 3s to update
+    without full page reloads. Returns ALL tasks (including hidden) so the
+    client-side JS can apply its own filtering based on the show_hidden toggle."""
     data = load_tasks()
     return jsonify({"tasks": data["tasks"], "dispatcher": _read_dispatcher_status()})
 

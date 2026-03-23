@@ -24,7 +24,13 @@ TASKS_FILE = Path(os.environ.get("TASKS_FILE", str(_AGENT_DIR.parent / "tasks.js
 
 
 def load_env_file(path: str = "") -> None:
-    """Load key=value pairs from .env into os.environ."""
+    """Load key=value pairs from .env into os.environ.
+
+    Uses setdefault so existing env vars are never overridden — the real
+    environment always wins over the file. Handles standard .env quoting:
+    both SMTP_PASSWORD="secret" and SMTP_PASSWORD=secret are accepted.
+    Splits on the first '=' only, so values containing '=' are preserved.
+    """
     if not path:
         path = str(_AGENT_DIR / ".env")
     try:
@@ -32,15 +38,28 @@ def load_env_file(path: str = "") -> None:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, val = line.partition("=")
-                os.environ.setdefault(key.strip(), val.strip())
+                val = val.strip()
+                # Strip surrounding quotes (single or double) from values
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+                    val = val[1:-1]
+                os.environ.setdefault(key.strip(), val)
     except FileNotFoundError:
         pass
 
 
 def build_body(tasks: list, today: str) -> str:
+    """Build the plain-text email body with three sections.
+
+    Sections:
+      - Completed: tasks done today (filtered by completed_at date)
+      - Pending: all currently-pending tasks (always shown for awareness)
+      - Failed: all currently-stopped tasks. Not date-filtered because stopped
+        tasks lack a stopped_at timestamp — filtering by created_at would silently
+        miss tasks that were created on one day and stopped on another.
+    """
     done    = [t for t in tasks if t["status"] == "done"    and (t.get("completed_at") or "").startswith(today)]
     pending = [t for t in tasks if t["status"] == "pending"]
-    failed  = [t for t in tasks if t["status"] == "stopped"  and (t.get("completed_at") or t.get("created_at") or "").startswith(today)]
+    failed  = [t for t in tasks if t["status"] == "stopped"]
 
     lines = []
 
@@ -69,6 +88,14 @@ def build_body(tasks: list, today: str) -> str:
 
 
 def send_digest() -> None:
+    """Build and send the daily digest email via SMTP.
+
+    Flow: load .env credentials → read tasks.json → build body → send via STARTTLS.
+    Silently exits if SMTP_USER or SMTP_PASSWORD are not set (allows running
+    the cron job on machines without email configured).
+    Reads tasks.json directly (not via task_store) so the digest can run
+    standalone without the agent's sys.path setup.
+    """
     load_env_file()
 
     smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
