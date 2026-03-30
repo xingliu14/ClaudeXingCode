@@ -116,14 +116,10 @@ class TestBuildTaskPrompt:
         assert "1. step one" in result
         assert result.index("APPROVED PLAN") < result.index("TASK:")
 
-    def test_none_plan_omits_section(self):
-        result = build_task_prompt("Do X", plan_text=None)
-        assert "APPROVED PLAN" not in result
-
-    def test_empty_plan_text_omits_section(self):
-        """Empty string is falsy in Python — should behave like None, not inject
-        an empty APPROVED PLAN section."""
-        result = build_task_prompt("Do X", plan_text="")
+    @pytest.mark.parametrize("plan_text", [None, ""])
+    def test_falsy_plan_omits_section(self, plan_text):
+        """None and empty string are both falsy — neither should inject an APPROVED PLAN section."""
+        result = build_task_prompt("Do X", plan_text=plan_text)
         assert "APPROVED PLAN" not in result
 
 

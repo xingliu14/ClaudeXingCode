@@ -323,6 +323,14 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
         ]
         print("[dispatcher] Docker auth: credential file mounts", flush=True)
 
+    # GitHub CLI auth + git author identity — forwarded when present, noop if absent.
+    # Required for the push-review flow: `gh auth status` and `git push` inside the container.
+    for env_var in ("GH_TOKEN", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+        val = os.environ.get(env_var, "")
+        if val:
+            docker_cmd += ["-e", f"{env_var}={val}"]
+
     docker_cmd += ["-w", "/workspace", DOCKER_IMAGE] + cc_cmd
 
     print(f"[dispatcher] Running CC in Docker ({DOCKER_IMAGE})...", flush=True)
@@ -527,6 +535,7 @@ def plan_task(task: dict) -> None:
     task_id = task["id"]
     print(f"[dispatcher] Planning task #{task_id}: {task['prompt'][:80]}", flush=True)
 
+    plan_session_start = datetime.now(timezone.utc)
     write_status("running", f"Planning #{task_id}", task_id)
     update_task(task_id, status="in_progress",
                 progress_action="started planning",
@@ -535,15 +544,34 @@ def plan_task(task: dict) -> None:
         plan_model = task.get("plan_model") or task.get("model", DEFAULT_MODEL)
         rejection_comments = task.get("rejection_comments") or []
         plan_prompt = build_plan_prompt(task["prompt"], rejection_comments)
-        _, plan_output = run_cc_local(plan_prompt, model=plan_model)
+        plan_rc, plan_output = run_cc_local(plan_prompt, model=plan_model)
     except subprocess.TimeoutExpired:
         update_task(task_id, status="stopped", stop_reason="timeout",
                     summary="Plan step timed out",
                     progress_action="stopped", progress_details="plan step timed out")
         return
 
-    if is_token_limit_error(plan_output):
+    plan_duration_s = round((datetime.now(timezone.utc) - plan_session_start).total_seconds())
+    plan_rate_limited = is_token_limit_error(plan_output)
+
+    def _append_plan_session(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id:
+                if not isinstance(t.get("sessions"), list):
+                    t["sessions"] = []
+                t["sessions"].append({
+                    "started_at": plan_session_start.isoformat(),
+                    "duration_s": plan_duration_s,
+                    "exit_code": plan_rc,
+                    "rate_limited": plan_rate_limited,
+                })
+                break
+
+    locked_update(_append_plan_session)
+
+    if plan_rate_limited:
         update_task(task_id, status="pending",
+                    rate_limited_at=datetime.now(timezone.utc).isoformat(),
                     progress_action="token limit hit during planning",
                     progress_details="will retry after backoff")
         write_status("sleeping", "Token limit — backing off")
@@ -609,8 +637,10 @@ def execute_task(task: dict) -> None:
         print(f"[dispatcher] Task #{task_id} loop detected after {retry_count[0] - 1} retries.", flush=True)
         return
 
+    session_start = datetime.now(timezone.utc)
     write_status("running", f"Executing #{task_id}", task_id)
     update_task(task_id, status="in_progress",
+                started_at=session_start.isoformat(),
                 progress_action="started execution")
     try:
         exec_model = task.get("exec_model") or task.get("model", DEFAULT_MODEL)
@@ -623,20 +653,39 @@ def execute_task(task: dict) -> None:
         except (json.JSONDecodeError, TypeError):
             pass
         exec_prompt = build_task_prompt(task["prompt"], plan_text=plan_text)
-        _, exec_output = run_cc_docker(exec_prompt, model=exec_model)
+        exec_rc, exec_output = run_cc_docker(exec_prompt, model=exec_model)
     except subprocess.TimeoutExpired:
         update_task(task_id, status="stopped", stop_reason="timeout",
                     summary="Execution timed out",
                     progress_action="stopped", progress_details="execution timed out")
         return
 
-    if is_token_limit_error(exec_output):
+    duration_s = round((datetime.now(timezone.utc) - session_start).total_seconds())
+    rate_limited = is_token_limit_error(exec_output)
+
+    def _append_exec_session(data):
+        for t in data["tasks"]:
+            if t["id"] == task_id:
+                if not isinstance(t.get("sessions"), list):
+                    t["sessions"] = []
+                t["sessions"].append({
+                    "started_at": session_start.isoformat(),
+                    "duration_s": duration_s,
+                    "exit_code": exec_rc,
+                    "rate_limited": rate_limited,
+                })
+                break
+
+    locked_update(_append_exec_session)
+
+    if rate_limited:
         # Keep status as in_progress with plan intact (not pending) so the approved
         # plan is preserved. On the next iteration, pick_approved_task will route
         # directly back to execute_task, skipping the plan phase entirely.
         # Compare with plan_task's token limit handling, which resets to pending
         # because there's no approved plan to preserve.
         update_task(task_id, status="in_progress",
+                    rate_limited_at=datetime.now(timezone.utc).isoformat(),
                     progress_action="token limit hit during execution",
                     progress_details="will retry after backoff")
         write_status("sleeping", "Token limit — backing off")

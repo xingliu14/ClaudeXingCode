@@ -110,6 +110,47 @@ class TestBuildBody:
         assert "Pending (0):" in body
         assert "Failed (0):" in body
 
+    def test_session_stats_appear(self):
+        """Stats line shows today's session count, rate-limit hits, and avg duration."""
+        today = "2026-03-29"
+        tasks = [
+            {"id": 1, "status": "done", "prompt": "Task A", "completed_at": f"{today}T10:00:00",
+             "sessions": [
+                 {"started_at": f"{today}T09:00:00", "duration_s": 120, "exit_code": 0, "rate_limited": False},
+                 {"started_at": f"{today}T09:30:00", "duration_s": 60,  "exit_code": 0, "rate_limited": True},
+             ]},
+        ]
+        body = build_body(tasks, today)
+
+        assert "Sessions today: 2" in body
+        assert "Rate limits: 1" in body
+        assert "Avg duration: 1m 30s" in body
+
+    def test_session_stats_excludes_other_days(self):
+        """Sessions from other days are not counted in today's stats."""
+        today = "2026-03-29"
+        tasks = [
+            {"id": 1, "status": "done", "prompt": "Task A", "completed_at": f"{today}T10:00:00",
+             "sessions": [
+                 {"started_at": "2026-03-28T22:00:00", "duration_s": 300, "exit_code": 0, "rate_limited": True},
+             ]},
+        ]
+        body = build_body(tasks, today)
+
+        assert "Sessions today: 0" in body
+        assert "Rate limits: 0" in body
+        assert "Avg duration: n/a" in body
+
+    def test_session_stats_no_sessions(self):
+        """Tasks with no sessions show zero stats without error."""
+        today = "2026-03-29"
+        tasks = [{"id": 1, "status": "pending", "prompt": "Task A"}]
+        body = build_body(tasks, today)
+
+        assert "Sessions today: 0" in body
+        assert "Rate limits: 0" in body
+        assert "Avg duration: n/a" in body
+
 
 class TestSendDigest:
     """send_digest loads credentials, builds the email body, and delivers via SMTP.

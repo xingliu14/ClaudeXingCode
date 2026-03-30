@@ -48,7 +48,7 @@ def load_env_file(path: str = "") -> None:
 
 
 def build_body(tasks: list, today: str) -> str:
-    """Build the plain-text email body with three sections.
+    """Build the plain-text email body with three sections plus a session stats footer.
 
     Sections:
       - Completed: tasks done today (filtered by completed_at date)
@@ -56,6 +56,8 @@ def build_body(tasks: list, today: str) -> str:
       - Failed: all currently-stopped tasks. Not date-filtered because stopped
         tasks lack a stopped_at timestamp — filtering by created_at would silently
         miss tasks that were created on one day and stopped on another.
+      - Stats: session count, rate-limit hits, avg duration — filtered to today's
+        sessions by started_at date prefix.
     """
     done    = [t for t in tasks if t["status"] == "done"    and (t.get("completed_at") or "").startswith(today)]
     pending = [t for t in tasks if t["status"] == "pending"]
@@ -83,6 +85,22 @@ def build_body(tasks: list, today: str) -> str:
         lines.append(f"  #{t['id']} — {t['prompt'][:60]}{(' (' + reason + ')') if reason else ''}")
     if not failed:
         lines.append("  (none)")
+
+    # Session stats: only today's sessions (filtered by started_at date prefix)
+    today_sessions = [
+        s for t in tasks for s in (t.get("sessions") or [])
+        if (s.get("started_at") or "").startswith(today)
+    ]
+    rate_limit_count = sum(1 for s in today_sessions if s.get("rate_limited"))
+    durations = [s["duration_s"] for s in today_sessions if "duration_s" in s]
+    if durations:
+        avg_s = round(sum(durations) / len(durations))
+        avg_str = f"{avg_s // 60}m {avg_s % 60}s" if avg_s >= 60 else f"{avg_s}s"
+    else:
+        avg_str = "n/a"
+
+    lines.append("")
+    lines.append(f"📊 Sessions today: {len(today_sessions)}  |  Rate limits: {rate_limit_count}  |  Avg duration: {avg_str}")
 
     return "\n".join(lines)
 

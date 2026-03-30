@@ -53,6 +53,9 @@ SHARED_CSS = """
     header nav a:hover { color: #fff; }
     .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
                   margin-right: 0.3rem; vertical-align: middle; }
+    #review-badge { display: inline-block; background: #f59e0b; color: #fff;
+                    font-size: 0.75rem; font-weight: 700; padding: 0.15rem 0.5rem;
+                    border-radius: 4px; }
     .status-running { background: #22c55e; }
     .status-sleeping { background: #f59e0b; }
     .status-idle { background: #94a3b8; }
@@ -88,6 +91,7 @@ HEADER_HTML = """
     <a href="/">Board</a>
     <a href="/progress">Progress</a>
     <a href="/log">Git Log</a>
+    <span id="review-badge"></span>
     <span id="dispatcher-status"></span>
   </nav>
 </header>
@@ -162,6 +166,22 @@ BOARD_HTML = """
                 font-size: 0.65rem; color: #888; cursor: pointer; }
     .btn-hide:hover { background: #f0f0f0; }
     .card.hidden-card { opacity: 0.5; }
+    .col-done h2 { cursor: pointer; user-select: none; }
+    .col-done h2::after { content: ' ▾'; font-size: 0.65rem; color: #aaa; }
+    .col-done.col-collapsed h2::after { content: ' ▸'; }
+    .col-done.col-collapsed > :not(h2) { display: none; }
+    /* Human-attention: review columns */
+    .col-plan_review, .col-push_review { background: #fffbeb; }
+    .col-plan_review h2, .col-push_review h2 { color: #92400e; }
+    .card-review { border-color: #f59e0b !important; background: #fffbeb !important; }
+    .btn-review { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px;
+                  background: #f59e0b; color: #fff; font-size: 0.7rem; font-weight: 700;
+                  text-decoration: none; border: none; cursor: pointer; }
+    /* Action Required banner */
+    #review-banner { display: none; margin: 0 1rem 0.75rem; padding: 0.6rem 1rem;
+                     background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px;
+                     font-size: 0.85rem; color: #92400e; font-weight: 600; }
+    #review-banner a { color: #92400e; }
     .prio-sel-high { background: #fee2e2 !important; color: #b91c1c !important; }
     .prio-sel-medium { background: #fef9c3 !important; color: #92400e !important; }
     .prio-sel-low { background: #dcfce7 !important; color: #166534 !important; }
@@ -195,6 +215,8 @@ BOARD_HTML = """
   <a href="/?show_hidden=1" class="btn btn-sm" style="background:#e5e7eb;color:#333;font-size:0.75rem">Show Hidden Tasks</a>
   {% endif %}
 </div>
+
+<div id="review-banner"></div>
 
 {# --- Main pipeline: happy path left-to-right --- #}
 <div class="section-label">Pipeline</div>
@@ -322,11 +344,20 @@ BOARD_HTML = """
     if (t.blocked_on && t.blocked_on.length) meta += '<span class="badge badge-blocked">blocked ' + t.blocked_on.length + '</span>';
     if (t.pushed_at) meta += '<span class="pushed-tag">pushed</span>';
     if (t.stop_reason) meta += '<span class="reason-tag">' + esc(t.stop_reason) + '</span>';
+    if (t.status === 'in_progress' && t.started_at) {
+      const elapsed = Math.round((Date.now() - Date.parse(t.started_at)) / 1000);
+      const m = Math.floor(elapsed / 60);
+      const s = elapsed % 60;
+      meta += '<span class="badge" style="background:#dbeafe;color:#1d4ed8">\u29d7 ' + (m > 0 ? m + 'm ' + s + 's' : s + 's') + '</span>';
+    }
     const hideAction = t.hidden
       ? '<form method="post" action="/tasks/' + t.id + '/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>'
       : '<form method="post" action="/tasks/' + t.id + '/hide" style="margin:0"><button class="btn-hide">hide</button></form>';
     meta += hideAction;
-    return '<div class="card' + cls + '"><a href="/tasks/' + t.id + '">#' + t.id + ' ' + prompt + '</a><div class="meta">' + meta + '</div></div>';
+    const isReview = t.status === 'plan_review' || t.status === 'push_review';
+    if (isReview) meta += '<a href="/tasks/' + t.id + '" class="btn-review">Review \u2192</a>';
+    const cardCls = 'card' + cls + (isReview ? ' card-review' : '');
+    return '<div class="' + cardCls + '"><a href="/tasks/' + t.id + '">#' + t.id + ' ' + prompt + '</a><div class="meta">' + meta + '</div></div>';
   }
 
   function renderCol(tasks, status) {
@@ -387,6 +418,30 @@ BOARD_HTML = """
       const label = d.label || dot;
       el.innerHTML = '<span class="status-dot status-' + dot + '"></span><span style="color:#ccc;font-size:0.8rem">' + esc(label) + '</span>';
     }
+
+    // Review badge: ⚑ N when plan_review or push_review tasks exist
+    const reviewEl = document.getElementById('review-badge');
+    const reviewTasks = data.tasks.filter(t => t.status === 'plan_review' || t.status === 'push_review');
+    if (reviewEl) {
+      const n = reviewTasks.length;
+      reviewEl.textContent = n > 0 ? '\u2691 ' + n : '';
+      reviewEl.style.display = n > 0 ? 'inline-block' : 'none';
+    }
+
+    // Action Required banner
+    const banner = document.getElementById('review-banner');
+    if (banner) {
+      if (reviewTasks.length > 0) {
+        const first = reviewTasks[0];
+        const label = first.status === 'push_review' ? 'push' : 'plan';
+        banner.innerHTML = '\u2691 Action Required \u2014 ' + reviewTasks.length + ' task' + (reviewTasks.length > 1 ? 's' : '') +
+          ' need' + (reviewTasks.length === 1 ? 's' : '') + ' your review &mdash; ' +
+          '<a href="/tasks/' + first.id + '">Review #' + first.id + ' (' + label + ') &rarr;</a>';
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
   }
 
   function poll() {
@@ -394,6 +449,19 @@ BOARD_HTML = """
     setTimeout(poll, POLL_MS);
   }
   setTimeout(poll, POLL_MS);
+
+  // Done column: collapsed by default; click h2 to toggle; state persisted in localStorage.
+  // The col-collapsed class is on the container div, so AJAX card replacements don't affect it.
+  (function() {
+    const doneCol = document.querySelector('.col-done');
+    if (!doneCol) return;
+    const stored = localStorage.getItem('done-col-collapsed');
+    if (stored !== 'false') doneCol.classList.add('col-collapsed');
+    doneCol.querySelector('h2').addEventListener('click', function() {
+      doneCol.classList.toggle('col-collapsed');
+      localStorage.setItem('done-col-collapsed', doneCol.classList.contains('col-collapsed'));
+    });
+  })();
 })();
 </script>
 </body>
@@ -646,6 +714,13 @@ DETAIL_HTML = """
         const dot = d.state || 'idle';
         const label = d.label || dot;
         el.innerHTML = '<span class="status-dot status-' + dot + '"></span><span style="color:#ccc;font-size:0.8rem">' + esc(label) + '</span>';
+      }
+      // Review badge
+      const reviewEl = document.getElementById('review-badge');
+      if (reviewEl) {
+        const n = data.tasks.filter(t => t.status === 'plan_review' || t.status === 'push_review').length;
+        reviewEl.textContent = n > 0 ? '\u2691 ' + n : '';
+        reviewEl.style.display = n > 0 ? 'inline-block' : 'none';
       }
     }).catch(() => {});
     setTimeout(poll, POLL_MS);

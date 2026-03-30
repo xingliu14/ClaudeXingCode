@@ -28,20 +28,6 @@ class TestDoomLoop:
                 "retry_count": retry_count, "parent": None,
                 "dependents": [], "blocked_on": []}
 
-    def test_retry_count_increments_on_each_call(self, tmp_path, monkeypatch):
-        tf = tmp_path / "tasks.json"
-        task = self._make_task(retry_count=0)
-        write_tasks(tf, {"tasks": [task]})
-        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
-        monkeypatch.setattr(dispatcher, "STATUS_FILE", tmp_path / "status.json")
-        monkeypatch.setattr(dispatcher, "MAX_RETRIES", 10)
-        monkeypatch.setattr("subprocess.run", self._exec_mock())
-
-        dispatcher.execute_task(task)
-
-        t = json.loads(tf.read_text())["tasks"][0]
-        assert t["retry_count"] == 1
-
     def test_retry_count_accumulates_across_calls(self, tmp_path, monkeypatch):
         tf = tmp_path / "tasks.json"
         task = self._make_task(retry_count=2)
@@ -57,22 +43,7 @@ class TestDoomLoop:
         assert t["retry_count"] == 3
 
     def test_stops_with_loop_detected_when_over_threshold(self, tmp_path, monkeypatch):
-        """retry_count=3 + increment → 4 > MAX_RETRIES(3) → stopped."""
-        tf = tmp_path / "tasks.json"
-        task = self._make_task(retry_count=3)
-        write_tasks(tf, {"tasks": [task]})
-        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
-        monkeypatch.setattr(dispatcher, "STATUS_FILE", tmp_path / "status.json")
-        monkeypatch.setattr(dispatcher, "MAX_RETRIES", 3)
-        monkeypatch.setattr("subprocess.run", self._exec_mock())
-
-        dispatcher.execute_task(task)
-
-        t = json.loads(tf.read_text())["tasks"][0]
-        assert t["status"] == "stopped"
-        assert t["stop_reason"] == "loop_detected"
-
-    def test_no_docker_call_when_loop_detected(self, tmp_path, monkeypatch):
+        """retry_count=3 + increment → 4 > MAX_RETRIES(3) → stopped without calling Docker."""
         tf = tmp_path / "tasks.json"
         task = self._make_task(retry_count=3)
         write_tasks(tf, {"tasks": [task]})
@@ -84,6 +55,9 @@ class TestDoomLoop:
 
         dispatcher.execute_task(task)
 
+        t = json.loads(tf.read_text())["tasks"][0]
+        assert t["status"] == "stopped"
+        assert t["stop_reason"] == "loop_detected"
         mock_run.assert_not_called()
 
     def test_runs_normally_at_threshold(self, tmp_path, monkeypatch):
