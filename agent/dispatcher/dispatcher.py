@@ -80,6 +80,10 @@ def update_task(task_id: int, progress_action: str = "", progress_details: str =
         log_progress(task_id, progress_action, progress_details)
 
 
+def _priority_key(t: dict) -> tuple:
+    return (PRIORITY_ORDER.get(t.get("priority", "medium"), 1), t["id"])
+
+
 def pick_next_task(tasks: list) -> dict | None:
     """Pick the highest-priority pending task that isn't blocked.
     Sorts by (priority rank, id) so high-priority tasks run first,
@@ -87,7 +91,7 @@ def pick_next_task(tasks: list) -> dict | None:
     pending = [t for t in tasks if t["status"] == "pending" and not t.get("blocked_on")]
     if not pending:
         return None
-    return sorted(pending, key=lambda t: (PRIORITY_ORDER.get(t.get("priority", "medium"), 1), t["id"]))[0]
+    return sorted(pending, key=_priority_key)[0]
 
 
 def pick_approved_task(tasks: list) -> dict | None:
@@ -95,7 +99,7 @@ def pick_approved_task(tasks: list) -> dict | None:
     approved = [t for t in tasks if t["status"] == "in_progress" and t.get("plan")]
     if not approved:
         return None
-    return sorted(approved, key=lambda t: (PRIORITY_ORDER.get(t.get("priority", "medium"), 1), t["id"]))[0]
+    return sorted(approved, key=_priority_key)[0]
 
 
 TOKEN_LIMIT_PATTERNS = [
@@ -373,6 +377,65 @@ def git_commit(message: str) -> None:
         subprocess.run(["git", "commit", "-m", message], cwd=WORKSPACE, capture_output=True)
 
 
+def git_push() -> bool:
+    """Push the current branch to origin. Returns True on success."""
+    result = subprocess.run(
+        ["git", "push"],
+        cwd=WORKSPACE,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"[dispatcher] git push failed: {result.stderr[:200]}", flush=True)
+        return False
+    return True
+
+
+def task_artifact_folder(task_id: int) -> Path:
+    """Return the artifact folder path for a task, creating nested structure for subtasks.
+
+    Root task N       → <WORKSPACE>/agent_log/tasks/task_N/
+    Subtask N (parent P, grandparent G, ...)
+                      → <WORKSPACE>/agent_log/tasks/task_G/.../task_P/task_N/
+
+    Walks the parent chain by loading tasks.json so the full ancestry is available.
+    The folder is NOT created here — callers must mkdir as needed."""
+    tasks_root = Path(WORKSPACE) / "agent_log" / "tasks"
+    data = load_tasks()
+    task_map = {t["id"]: t for t in data["tasks"]}
+
+    # Build ancestor chain from this task up to the root
+    chain = []
+    current_id = task_id
+    while current_id is not None:
+        chain.append(current_id)
+        t = task_map.get(current_id)
+        current_id = t.get("parent") if t else None
+
+    # chain is [task_id, parent_id, grandparent_id, ...] — reverse to get root-first
+    chain.reverse()
+    folder = tasks_root
+    for tid in chain:
+        folder = folder / f"task_{tid}"
+    return folder
+
+
+def write_result_md(task_id: int, summary: str) -> None:
+    """Create the task artifact folder and write result.md with the task summary.
+
+    This is the first write to the task's artifact folder — it creates the
+    directory (including any missing parent folders for nested subtasks).
+    Errors are logged but not re-raised so a write failure never blocks task completion."""
+    try:
+        folder = task_artifact_folder(task_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        result_path = folder / "result.md"
+        result_path.write_text(f"# Task #{task_id} Result\n\n{summary}\n")
+        print(f"[dispatcher] Wrote {result_path.relative_to(WORKSPACE)}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[dispatcher] Warning: could not write result.md for task #{task_id}: {exc}", flush=True)
+
+
 def on_task_complete(task_id: int) -> None:
     """
     Called when a task reaches `done`. Propagates completion through the dependency graph:
@@ -412,16 +475,45 @@ def on_task_complete(task_id: int) -> None:
 # Main loop
 # ---------------------------------------------------------------------------
 
+def pick_push_approved_task(tasks: list) -> dict | None:
+    """Find a push_review task whose push has been approved by the user (push_approved=True)."""
+    candidates = [t for t in tasks if t["status"] == "push_review" and t.get("push_approved")]
+    if not candidates:
+        return None
+    return min(candidates, key=_priority_key)
+
+
 def pick_actionable_task(tasks: list) -> dict | None:
-    """Pick the next task to act on: approved tasks first, then pending.
+    """Pick the next task to act on: push-approved > approved-plan > pending.
 
     Priority order ensures approved work (human already reviewed) is never
     starved by incoming pending tasks. This is the single scheduling entry
     point called by the main loop — all routing decisions flow from here."""
+    push_task = pick_push_approved_task(tasks)
+    if push_task:
+        return push_task
     approved = pick_approved_task(tasks)
     if approved:
         return approved
     return pick_next_task(tasks)
+
+
+def do_push_task(task: dict) -> None:
+    """Execute git push for a push_review task the user has approved, then mark it done."""
+    task_id = task["id"]
+    print(f"[dispatcher] Pushing task #{task_id}...", flush=True)
+    write_status("running", f"Pushing #{task_id}", task_id)
+    success = git_push()
+    now = datetime.now(timezone.utc).isoformat()
+    if success:
+        update_task(task_id, status="done", pushed_at=now,
+                    progress_action="pushed", progress_details="git push succeeded")
+        print(f"[dispatcher] Task #{task_id} pushed and done.", flush=True)
+    else:
+        # Reset approval flag so the task stays in push_review for user retry or rejection
+        update_task(task_id, push_approved=False,
+                    progress_action="push failed", progress_details="git push failed; awaiting retry")
+        print(f"[dispatcher] Task #{task_id} push failed; reset to push_review.", flush=True)
 
 
 def main() -> None:
@@ -444,12 +536,12 @@ def main() -> None:
             time.sleep(60)
             continue
 
-        # Route based on task state: approved tasks (in_progress + plan) go straight
-        # to execution in Docker; pending tasks need a plan first (local, read-only).
         # Note: `task` is a snapshot from this iteration's load_tasks() — the web UI
         # could modify the task between here and the subprocess start, but the window
         # is small and the consequences are benign (e.g., planning a just-cancelled task).
-        if task["status"] == "in_progress" and task.get("plan"):
+        if task["status"] == "push_review" and task.get("push_approved"):
+            do_push_task(task)
+        elif task["status"] == "in_progress" and task.get("plan"):
             execute_task(task)
         else:
             plan_task(task)
@@ -695,12 +787,14 @@ def execute_task(task: dict) -> None:
 
     now = datetime.now(timezone.utc).isoformat()
     summary = exec_output[-2000:] if len(exec_output) > 2000 else exec_output
-    update_task(task_id, status="done", completed_at=now, summary=summary,
-                progress_action="completed",
+    result = {"summary": summary, "artifacts": []}
+    write_result_md(task_id, summary)
+    update_task(task_id, status="push_review", completed_at=now, result=result,
+                progress_action="awaiting push review",
                 progress_details=summary or "")
     on_task_complete(task_id)
     git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
-    print(f"[dispatcher] Task #{task_id} done.", flush=True)
+    print(f"[dispatcher] Task #{task_id} complete — awaiting push review.", flush=True)
 
 
 if __name__ == "__main__":

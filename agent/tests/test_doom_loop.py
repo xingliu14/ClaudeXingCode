@@ -73,7 +73,7 @@ class TestDoomLoop:
         dispatcher.execute_task(task)
 
         t = json.loads(tf.read_text())["tasks"][0]
-        assert t["status"] == "done"
+        assert t["status"] == "push_review"
         assert t.get("stop_reason") is None
 
     def test_missing_retry_count_defaults_to_zero(self, tmp_path, monkeypatch):
@@ -94,7 +94,7 @@ class TestDoomLoop:
 
         t = json.loads(tf.read_text())["tasks"][0]
         assert t["retry_count"] == 1
-        assert t["status"] == "done"
+        assert t["status"] == "push_review"
 
     def test_default_max_retries_is_3(self):
         assert dispatcher.MAX_RETRIES == 3

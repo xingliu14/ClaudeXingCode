@@ -11,7 +11,7 @@ Routes:
   POST /tasks/<id>/reject        - reject plan with feedback
   POST /tasks/<id>/cancel        - cancel in-progress task -> stopped
   POST /tasks/<id>/retry         - requeue stopped/done task -> pending
-  POST /tasks/<id>/approve-push  - approve push -> done (with pushed_at)
+  POST /tasks/<id>/approve-push  - approve push -> dispatcher pushes -> done (with pushed_at)
   POST /tasks/<id>/reject-push   - reject push -> done (local commit only)
   GET  /progress                 - view PROGRESS.md
   GET  /log                      - view recent git log
@@ -477,13 +477,29 @@ DETAIL_HTML = """
   <title>Task #{{ task.id }}</title>
   <style>
     """ + SHARED_CSS + """
-    .content { padding: 1rem; max-width: 900px; }
+    .content { padding: 1rem; max-width: 1100px; }
     pre { background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 8px;
           overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; }
     .actions { display: flex; gap: 0.5rem; margin: 1rem 0; flex-wrap: wrap; align-items: center; }
-    .subtasks { margin-top: 1rem; }
+    /* Two-column layout */
+    .detail-cols { display: flex; gap: 1.5rem; align-items: flex-start; margin-top: 1rem; }
+    .detail-left  { flex: 3; min-width: 0; }
+    .detail-right { flex: 2; min-width: 0; }
+    .meta-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    .meta-card h3 { margin: 0 0 0.5rem; font-size: 0.85rem; text-transform: uppercase;
+                    letter-spacing: 0.05em; color: #666; }
+    .meta-row { font-size: 0.85rem; margin-bottom: 0.35rem; }
+    .meta-row label { color: #888; font-size: 0.75rem; display: block; margin-bottom: 0.1rem; }
+    .subtasks { margin-top: 0; }
     .subtask-item { background: #fff; border: 1px solid #e0e0e0; border-radius: 6px;
                     padding: 0.5rem; margin-bottom: 0.4rem; font-size: 0.85rem; }
+    .status-icon { font-style: normal; margin-right: 0.3rem; }
+    .status-icon.done       { color: #16a34a; }
+    .status-icon.running    { color: #2563eb; }
+    .status-icon.review     { color: #d97706; }
+    .status-icon.pending    { color: #6b7280; }
+    .status-icon.blocked    { color: #7c3aed; }
+    .status-icon.stopped    { color: #dc2626; }
     table.sessions { border-collapse: collapse; width: 100%; font-size: 0.8rem; margin-top: 0.5rem; }
     table.sessions th, table.sessions td { border: 1px solid #e0e0e0; padding: 0.4rem 0.6rem; text-align: left; }
     table.sessions th { background: #f3f4f6; font-weight: 600; }
@@ -496,6 +512,24 @@ DETAIL_HTML = """
     .timestamp { color: #888; font-size: 0.75rem; }
     .rate-limit-banner { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px;
                          padding: 0.5rem 0.75rem; font-size: 0.85rem; margin: 0.5rem 0; }
+    /* Plan rendering */
+    .plan-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+                 padding: 1rem; margin-bottom: 1rem; }
+    .plan-card h3 { margin: 0 0 0.5rem; font-size: 0.85rem; text-transform: uppercase;
+                    letter-spacing: 0.05em; color: #666; }
+    .plan-decision-badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px;
+                           font-size: 0.8rem; font-weight: 700; margin-bottom: 0.75rem; }
+    .plan-decision-execute  { background: #dbeafe; color: #1d4ed8; }
+    .plan-decision-decompose { background: #f3e8ff; color: #6b21a8; }
+    .plan-reasoning { font-size: 0.85rem; color: #555; font-style: italic;
+                      margin-bottom: 0.75rem; padding: 0.5rem; background: #f9f9f9;
+                      border-left: 3px solid #d1d5db; border-radius: 0 4px 4px 0; }
+    .plan-steps { font-size: 0.85rem; white-space: pre-wrap; margin: 0; }
+    .subtask-tree { list-style: none; padding: 0; margin: 0; }
+    .subtask-tree li { padding: 0.5rem 0.6rem; margin-bottom: 0.35rem; background: #f5f3ff;
+                       border: 1px solid #ddd6fe; border-radius: 6px; font-size: 0.85rem; }
+    .subtask-tree li .stnum { font-weight: 700; color: #6b21a8; margin-right: 0.4rem; }
+    .subtask-tree li .stdep { font-size: 0.75rem; color: #888; margin-top: 0.2rem; }
   </style>
 </head>
 <body>
@@ -503,38 +537,6 @@ DETAIL_HTML = """
 <div class="content">
 <p><a href="/">&larr; Board</a></p>
 <h1>#{{ task.id }} &mdash; {{ task.prompt }}</h1>
-<p>
-  <span class="state-badge state-{{ task.status }}">{{ task.status }}</span>
-  {% if task.get('stop_reason') %}<span class="state-badge state-stopped" style="margin-left:0.3rem">{{ task.stop_reason }}</span>{% endif %}
-  {% if task.get('pushed_at') %}<span class="state-badge state-done" style="margin-left:0.3rem">pushed</span>{% endif %}
-   | Priority: {{ task.get('priority','medium') }}
-   |
-   {% set pm = task.get('plan_model', task.get('model','sonnet')) %}
-   {% set em = task.get('exec_model', task.get('model','sonnet')) %}
-   <form method="post" action="/tasks/{{ task.id }}/set-model" style="display:inline">
-     Plan: <select name="plan_model" onchange="this.form.submit()" style="padding:0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.85rem">
-       <option value="sonnet" {% if pm=='sonnet' %}selected{% endif %}>Sonnet</option>
-       <option value="opus" {% if pm=='opus' %}selected{% endif %}>Opus</option>
-       <option value="haiku" {% if pm=='haiku' %}selected{% endif %}>Haiku</option>
-     </select>
-     Exec: <select name="exec_model" onchange="this.form.submit()" style="padding:0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.85rem">
-       <option value="sonnet" {% if em=='sonnet' %}selected{% endif %}>Sonnet</option>
-       <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
-       <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
-     </select>
-   </form>
-   |
-   <form method="post" action="/tasks/{{ task.id }}/set-auto-approve" style="display:inline">
-     <label style="cursor:pointer;font-size:0.85rem">
-       <input type="hidden" name="auto_approve" value="0">
-       <input type="checkbox" name="auto_approve" value="1" {% if task.get('auto_approve') %}checked{% endif %} onchange="this.form.submit()"> Auto-approve
-     </label>
-   </form>
-   {% if task.get('parent') %}| Subtask of <a href="/tasks/{{ task.parent }}">#{{ task.parent }}</a>{% endif %}
-   {% if task.get('created_at') %}| Created: <span class="timestamp">{{ task.created_at[:19] }}</span>{% endif %}
-   {% if task.get('completed_at') %}| Completed: <span class="timestamp">{{ task.completed_at[:19] }}</span>{% endif %}
-   {% if task.get('pushed_at') %}| Pushed: <span class="timestamp">{{ task.pushed_at[:19] }}</span>{% endif %}
-</p>
 
 {% if task.get('rate_limited_at') %}
 <div class="rate-limit-banner">
@@ -542,151 +544,274 @@ DETAIL_HTML = """
 </div>
 {% endif %}
 
-{# ---- Action buttons based on current status ---- #}
-<div class="actions">
+{# ---- Two-column layout ---- #}
+<div class="detail-cols">
 
-  {# Plan review: approve / reject #}
-  {% if task.status == 'plan_review' %}
-  <form method="post" action="/tasks/{{ task.id }}/approve">
-    <button class="btn btn-approve">Approve Plan</button>
-  </form>
-  <form method="post" action="/tasks/{{ task.id }}/reject" style="display:flex;gap:0.3rem">
-    <input name="feedback" placeholder="Rejection reason (optional)" style="padding:0.4rem;border-radius:6px;border:1px solid #ccc">
-    <button class="btn btn-reject">Reject</button>
-  </form>
-  {% endif %}
+  {# ======= LEFT: plan + approve/reject ======= #}
+  <div class="detail-left">
 
-  {# Push review: approve push / reject push #}
-  {% if task.status == 'push_review' %}
-  <form method="post" action="/tasks/{{ task.id }}/approve-push">
-    <button class="btn btn-approve">Approve Push</button>
-  </form>
-  <form method="post" action="/tasks/{{ task.id }}/reject-push">
-    <button class="btn btn-reject">Skip Push (keep local)</button>
-  </form>
-  {% endif %}
+    {# ---- Action buttons based on current status ---- #}
+    <div class="actions">
 
-  {# Cancel: only for in_progress or plan_review #}
-  {% if task.status in ('in_progress', 'plan_review') %}
-  <form method="post" action="/tasks/{{ task.id }}/cancel" onsubmit="return confirm('Cancel this task?')">
-    <button class="btn btn-cancel btn-sm">Cancel</button>
-  </form>
-  {% endif %}
+      {# Plan review: approve / reject #}
+      {% if task.status == 'plan_review' %}
+      <form method="post" action="/tasks/{{ task.id }}/approve">
+        <button class="btn btn-approve">Approve Plan</button>
+      </form>
+      <div id="reject-section-{{ task.id }}">
+        <button class="btn btn-reject" onclick="document.getElementById('reject-expand-{{ task.id }}').style.display='block';this.style.display='none'">Reject</button>
+        <div id="reject-expand-{{ task.id }}" style="display:none;margin-top:0.5rem">
+          <form method="post" action="/tasks/{{ task.id }}/reject">
+            <textarea name="feedback" placeholder="Rejection reason (optional)" rows="3"
+              style="width:100%;padding:0.4rem;border-radius:6px;border:1px solid #ccc;resize:vertical;box-sizing:border-box"></textarea>
+            <div style="display:flex;gap:0.5rem;margin-top:0.3rem">
+              <button class="btn btn-reject">Submit Rejection</button>
+              <button type="button" class="btn btn-sm" style="background:#6b7280;color:#fff"
+                onclick="document.getElementById('reject-expand-{{ task.id }}').style.display='none';document.querySelector('#reject-section-{{ task.id }} > .btn-reject').style.display=''">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% endif %}
 
-  {# Retry: only for stopped or done #}
-  {% if task.status in ('stopped', 'done') %}
-  <form method="post" action="/tasks/{{ task.id }}/retry">
-    <button class="btn btn-retry btn-sm">Retry / Requeue</button>
-  </form>
-  {% endif %}
+      {# Push review: approve push / reject push #}
+      {% if task.status == 'push_review' %}
+      <form method="post" action="/tasks/{{ task.id }}/approve-push">
+        <button class="btn btn-approve">Approve Push</button>
+      </form>
+      <form method="post" action="/tasks/{{ task.id }}/reject-push">
+        <button class="btn btn-reject">Skip Push (keep local)</button>
+      </form>
+      {% endif %}
 
-  {# Edit: available for any status except in_progress #}
-  {% if task.status != 'in_progress' %}
-  <button class="btn btn-edit btn-sm" onclick="document.getElementById('edit-form').style.display='block'">Edit</button>
-  {% endif %}
+      {# Cancel: only for in_progress or plan_review #}
+      {% if task.status in ('in_progress', 'plan_review') %}
+      <form method="post" action="/tasks/{{ task.id }}/cancel" onsubmit="return confirm('Cancel this task?')">
+        <button class="btn btn-cancel btn-sm">Cancel</button>
+      </form>
+      {% endif %}
 
-  {# Delete: available unless in_progress #}
-  {% if task.status != 'in_progress' %}
-  <form method="post" action="/tasks/{{ task.id }}/delete" onsubmit="return confirm('Delete task #{{ task.id }}? This cannot be undone.')">
-    <button class="btn btn-delete btn-sm">Delete</button>
-  </form>
-  {% endif %}
+      {# Retry: only for stopped or done #}
+      {% if task.status in ('stopped', 'done') %}
+      <form method="post" action="/tasks/{{ task.id }}/retry">
+        <button class="btn btn-retry btn-sm">Retry / Requeue</button>
+      </form>
+      {% endif %}
 
-  {# Hide / Unhide #}
-  {% if task.get('hidden') %}
-  <form method="post" action="/tasks/{{ task.id }}/unhide">
-    <button class="btn btn-sm" style="background:#6b7280;color:#fff">Unhide</button>
-  </form>
-  {% else %}
-  <form method="post" action="/tasks/{{ task.id }}/hide">
-    <button class="btn btn-sm" style="background:#6b7280;color:#fff">Hide</button>
-  </form>
-  {% endif %}
+    </div>{# end .actions #}
 
-</div>
+    {# ---- Plan ---- #}
+    {% if task.get('plan') %}
+    <h2>Plan</h2>
+    {% if plan_parsed %}
+      <div class="plan-card">
+        <span class="plan-decision-badge plan-decision-{{ plan_parsed.decision }}">
+          {{ plan_parsed.decision | upper }}
+        </span>
+        {% if plan_parsed.get('reasoning') %}
+        <div class="plan-reasoning">{{ plan_parsed.reasoning }}</div>
+        {% endif %}
+        {% if plan_parsed.decision == 'decompose' %}
+          <h3>Subtask Tree ({{ plan_parsed.get('subtasks', [])|length }} tasks)</h3>
+          <ul class="subtask-tree">
+            {% for st in plan_parsed.get('subtasks', []) %}
+            <li>
+              <span class="stnum">#{{ loop.index }}</span>{{ st.prompt }}
+              {% if st.get('depends_on') %}
+              <div class="stdep">depends on: {% for d in st.depends_on %}#{{ d + 1 }}{% if not loop.last %}, {% endif %}{% endfor %}</div>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          {% if plan_parsed.get('plan') %}
+          <pre class="plan-steps">{{ plan_parsed.plan }}</pre>
+          {% endif %}
+        {% endif %}
+      </div>
+    {% else %}
+    <pre>{{ task.plan }}</pre>
+    {% endif %}
+    {% endif %}
 
-{# ---- Edit form (hidden by default) ---- #}
-<div class="edit-form" id="edit-form">
-  <form method="post" action="/tasks/{{ task.id }}/edit">
-    <p><strong>Edit Task</strong></p>
-    <textarea name="prompt" rows="3">{{ task.prompt }}</textarea>
-    <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center">
-      <label>Priority:</label>
-      <select name="priority">
-        <option value="high" {% if task.get('priority')=='high' %}selected{% endif %}>High</option>
-        <option value="medium" {% if task.get('priority','medium')=='medium' %}selected{% endif %}>Medium</option>
-        <option value="low" {% if task.get('priority')=='low' %}selected{% endif %}>Low</option>
-      </select>
-      <label>Plan:</label>
-      <select name="plan_model">
-        {% set pm = task.get('plan_model', task.get('model','sonnet')) %}
-        <option value="sonnet" {% if pm=='sonnet' %}selected{% endif %}>Sonnet</option>
-        <option value="opus" {% if pm=='opus' %}selected{% endif %}>Opus</option>
-        <option value="haiku" {% if pm=='haiku' %}selected{% endif %}>Haiku</option>
-      </select>
-      <label>Exec:</label>
-      <select name="exec_model">
-        {% set em = task.get('exec_model', task.get('model','sonnet')) %}
-        <option value="sonnet" {% if em=='sonnet' %}selected{% endif %}>Sonnet</option>
-        <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
-        <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
-      </select>
-      <button class="btn btn-edit" type="submit">Save</button>
-      <button class="btn" type="button" onclick="document.getElementById('edit-form').style.display='none'" style="background:#e5e7eb;color:#333">Cancel</button>
+    {# ---- Result Summary ---- #}
+    {% set result_summary = (task.get('result') or {}).get('summary') or task.get('summary') %}
+    {% if result_summary %}
+    <h2>Result Summary</h2>
+    <pre>{{ result_summary }}</pre>
+    {% endif %}
+
+    {# ---- Edit form (hidden by default) ---- #}
+    <div class="edit-form" id="edit-form">
+      <form method="post" action="/tasks/{{ task.id }}/edit">
+        <p><strong>Edit Task</strong></p>
+        <textarea name="prompt" rows="3">{{ task.prompt }}</textarea>
+        <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+          <label>Priority:</label>
+          <select name="priority">
+            <option value="high" {% if task.get('priority')=='high' %}selected{% endif %}>High</option>
+            <option value="medium" {% if task.get('priority','medium')=='medium' %}selected{% endif %}>Medium</option>
+            <option value="low" {% if task.get('priority')=='low' %}selected{% endif %}>Low</option>
+          </select>
+          <label>Plan:</label>
+          <select name="plan_model">
+            {% set pm = task.get('plan_model', task.get('model','sonnet')) %}
+            <option value="sonnet" {% if pm=='sonnet' %}selected{% endif %}>Sonnet</option>
+            <option value="opus" {% if pm=='opus' %}selected{% endif %}>Opus</option>
+            <option value="haiku" {% if pm=='haiku' %}selected{% endif %}>Haiku</option>
+          </select>
+          <label>Exec:</label>
+          <select name="exec_model">
+            {% set em = task.get('exec_model', task.get('model','sonnet')) %}
+            <option value="sonnet" {% if em=='sonnet' %}selected{% endif %}>Sonnet</option>
+            <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
+            <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
+          </select>
+          <button class="btn btn-edit" type="submit">Save</button>
+          <button class="btn" type="button" onclick="document.getElementById('edit-form').style.display='none'" style="background:#e5e7eb;color:#333">Cancel</button>
+        </div>
+      </form>
     </div>
-  </form>
-</div>
 
-{# ---- Plan ---- #}
-{% if task.get('plan') %}
-<h2>Plan</h2>
-<pre>{{ task.plan }}</pre>
-{% endif %}
+  </div>{# end .detail-left #}
 
-{# ---- Result Summary ---- #}
-{% if task.get('summary') %}
-<h2>Result Summary</h2>
-<pre>{{ task.summary }}</pre>
-{% endif %}
+  {# ======= RIGHT: metadata + subtasks + sessions ======= #}
+  <div class="detail-right">
 
-{# ---- Sessions table (Phase 8) ---- #}
-{% if task.get('sessions') %}
-<h2>Sessions</h2>
-<table class="sessions">
-  <thead>
-    <tr><th>#</th><th>Started</th><th>Duration</th><th>Exit Code</th><th>Rate Limited?</th></tr>
-  </thead>
-  <tbody>
-    {% for s in task.sessions %}
-    <tr>
-      <td>{{ loop.index }}</td>
-      <td>{{ s.get('started_at', '?')[:19] }}</td>
-      <td>
-        {% set dur = s.get('duration_s', 0) %}
-        {% if dur >= 3600 %}{{ (dur // 3600) }}h {{ ((dur % 3600) // 60) }}m
-        {% elif dur >= 60 %}{{ (dur // 60) }}m {{ (dur % 60) }}s
-        {% else %}{{ dur }}s{% endif %}
-      </td>
-      <td>{{ s.get('exit_code', '?') }}</td>
-      <td>{% if s.get('rate_limited') %}Yes &#9888;{% else %}No{% endif %}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-{% endif %}
+    {# ---- Metadata card ---- #}
+    <div class="meta-card">
+      <h3>Details</h3>
+      <div class="meta-row">
+        <span class="state-badge state-{{ task.status }}">{{ task.status }}</span>
+        {% if task.get('stop_reason') %}<span class="state-badge state-stopped" style="margin-left:0.3rem">{{ task.stop_reason }}</span>{% endif %}
+        {% if task.get('pushed_at') %}<span class="state-badge state-done" style="margin-left:0.3rem">pushed</span>{% endif %}
+      </div>
+      <div class="meta-row">
+        <label>Priority</label>
+        {{ task.get('priority','medium') }}
+      </div>
+      {% set pm = task.get('plan_model', task.get('model','sonnet')) %}
+      {% set em = task.get('exec_model', task.get('model','sonnet')) %}
+      <div class="meta-row">
+        <label>Models</label>
+        <form method="post" action="/tasks/{{ task.id }}/set-model" style="display:inline">
+          Plan: <select name="plan_model" onchange="this.form.submit()" style="padding:0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.82rem">
+            <option value="sonnet" {% if pm=='sonnet' %}selected{% endif %}>Sonnet</option>
+            <option value="opus" {% if pm=='opus' %}selected{% endif %}>Opus</option>
+            <option value="haiku" {% if pm=='haiku' %}selected{% endif %}>Haiku</option>
+          </select>
+          Exec: <select name="exec_model" onchange="this.form.submit()" style="padding:0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.82rem">
+            <option value="sonnet" {% if em=='sonnet' %}selected{% endif %}>Sonnet</option>
+            <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
+            <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
+          </select>
+        </form>
+      </div>
+      <div class="meta-row">
+        <label>Auto-approve</label>
+        <form method="post" action="/tasks/{{ task.id }}/set-auto-approve" style="display:inline">
+          <input type="hidden" name="auto_approve" value="0">
+          <input type="checkbox" name="auto_approve" value="1" {% if task.get('auto_approve') %}checked{% endif %} onchange="this.form.submit()">
+        </form>
+      </div>
+      {% if task.get('parent') %}
+      <div class="meta-row"><label>Parent</label><a href="/tasks/{{ task.parent }}">#{{ task.parent }}</a></div>
+      {% endif %}
+      {% if task.get('created_at') %}
+      <div class="meta-row"><label>Created</label><span class="timestamp">{{ task.created_at[:19] }}</span></div>
+      {% endif %}
+      {% if task.get('completed_at') %}
+      <div class="meta-row"><label>Completed</label><span class="timestamp">{{ task.completed_at[:19] }}</span></div>
+      {% endif %}
+      {% if task.get('pushed_at') %}
+      <div class="meta-row"><label>Pushed</label><span class="timestamp">{{ task.pushed_at[:19] }}</span></div>
+      {% endif %}
+      <div class="meta-row" style="margin-top:0.75rem;display:flex;gap:0.4rem;flex-wrap:wrap">
+        {# Edit: available for any status except in_progress #}
+        {% if task.status != 'in_progress' %}
+        <button class="btn btn-edit btn-sm" onclick="document.getElementById('edit-form').style.display='block'">Edit</button>
+        {% endif %}
+        {# Delete: available unless in_progress #}
+        {% if task.status != 'in_progress' %}
+        <form method="post" action="/tasks/{{ task.id }}/delete" onsubmit="return confirm('Delete task #{{ task.id }}? This cannot be undone.')">
+          <button class="btn btn-delete btn-sm">Delete</button>
+        </form>
+        {% endif %}
+        {# Hide / Unhide #}
+        {% if task.get('hidden') %}
+        <form method="post" action="/tasks/{{ task.id }}/unhide">
+          <button class="btn btn-sm" style="background:#6b7280;color:#fff">Unhide</button>
+        </form>
+        {% else %}
+        <form method="post" action="/tasks/{{ task.id }}/hide">
+          <button class="btn btn-sm" style="background:#6b7280;color:#fff">Hide</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>{# end .meta-card #}
 
-{# ---- Subtasks ---- #}
-{% if subtasks %}
-<div class="subtasks">
-  <h2>Subtasks</h2>
-  {% for s in subtasks %}
-  <div class="subtask-item">
-    <a href="/tasks/{{ s.id }}">#{{ s.id }}</a> [{{ s.status }}] {{ s.prompt[:80] }}
-    {% if s.get('blocked_on') %}<span class="badge badge-blocked" style="margin-left:0.3rem">blocked by #{{ s.blocked_on|join(', #') }}</span>{% endif %}
-  </div>
-  {% endfor %}
-</div>
-{% endif %}
+    {# ---- Subtasks card ---- #}
+    {% if subtasks %}
+    <div class="meta-card">
+      <h3>Subtasks ({{ subtasks|length }})</h3>
+      <div class="subtasks">
+        {% for s in subtasks %}
+        {% set _blocked = s.get('blocked_on') and s.blocked_on|length > 0 %}
+        {% if _blocked %}
+          {% set _icon = '⊟' %}{% set _cls = 'blocked' %}
+        {% elif s.status == 'done' or s.status == 'push_review' %}
+          {% set _icon = '✓' %}{% set _cls = 'done' %}
+        {% elif s.status == 'in_progress' %}
+          {% set _icon = '⟳' %}{% set _cls = 'running' %}
+        {% elif s.status == 'plan_review' %}
+          {% set _icon = '●' %}{% set _cls = 'review' %}
+        {% elif s.status == 'stopped' %}
+          {% set _icon = '⊘' %}{% set _cls = 'stopped' %}
+        {% else %}
+          {% set _icon = '○' %}{% set _cls = 'pending' %}
+        {% endif %}
+        <div class="subtask-item">
+          <i class="status-icon {{ _cls }}">{{ _icon }}</i>
+          <a href="/tasks/{{ s.id }}">#{{ s.id }}</a>
+          {% if _blocked %}blocked(#{{ s.blocked_on|join(', #') }}){% endif %}
+          {{ s.prompt[:80] }}
+        </div>
+        {% endfor %}
+      </div>
+    </div>{# end subtasks card #}
+    {% endif %}
+
+    {# ---- Sessions card (Phase 8) ---- #}
+    {% if task.get('sessions') %}
+    <div class="meta-card">
+      <h3>Sessions</h3>
+      <table class="sessions">
+        <thead>
+          <tr><th>#</th><th>Started</th><th>Duration</th><th>Exit</th><th>RL?</th></tr>
+        </thead>
+        <tbody>
+          {% for s in task.sessions %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ s.get('started_at', '?')[:19] }}</td>
+            <td>
+              {% set dur = s.get('duration_s', 0) %}
+              {% if dur >= 3600 %}{{ (dur // 3600) }}h {{ ((dur % 3600) // 60) }}m
+              {% elif dur >= 60 %}{{ (dur // 60) }}m {{ (dur % 60) }}s
+              {% else %}{{ dur }}s{% endif %}
+            </td>
+            <td>{{ s.get('exit_code', '?') }}</td>
+            <td>{% if s.get('rate_limited') %}Yes &#9888;{% else %}No{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>{# end sessions card #}
+    {% endif %}
+
+  </div>{# end .detail-right #}
+
+</div>{# end .detail-cols #}
 
 </div>
 <script>
@@ -887,7 +1012,15 @@ def task_detail(task_id: int):
     if task is None:
         return "Task not found", 404
     subtasks = [t for t in data["tasks"] if t.get("parent") == task_id]
-    return render_template_string(DETAIL_HTML, task=task, subtasks=subtasks)
+    plan_parsed = None
+    if task.get("plan"):
+        try:
+            plan_parsed = json.loads(task["plan"])
+            if not isinstance(plan_parsed, dict) or plan_parsed.get("decision") not in ("execute", "decompose"):
+                plan_parsed = None
+        except (json.JSONDecodeError, TypeError):
+            plan_parsed = None
+    return render_template_string(DETAIL_HTML, task=task, subtasks=subtasks, plan_parsed=plan_parsed)
 
 
 @app.post("/tasks/<int:task_id>/edit")
@@ -1118,6 +1251,7 @@ def retry_task(task_id: int):
                 t["status"] = "pending"
                 t["completed_at"] = None
                 t["summary"] = None
+                t["result"] = None
                 t["plan"] = None
                 t["rejection_comments"] = []
                 t["retry_count"] = 0
@@ -1135,8 +1269,7 @@ def approve_push(task_id: int):
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id and t["status"] == "push_review":
-                t["status"] = "done"
-                t["pushed_at"] = datetime.now(timezone.utc).isoformat()
+                t["push_approved"] = True
                 break
 
     locked_update(mutate)

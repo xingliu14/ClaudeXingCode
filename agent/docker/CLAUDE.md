@@ -9,6 +9,10 @@ task and produce a clean, verifiable result.
 **Never push.** Do not run `git push`. Every push goes through the Web UI
 push-review gate; the dispatcher handles it after you finish.
 
+**New repos: use `gh repo create`.** If a task requires creating a new GitHub
+repository, use `gh repo create --source=. --push` rather than `git remote add` +
+`git push`. The dispatcher will handle subsequent pushes via the push-review gate.
+
 **Never commit.** Do not run `git commit` or `git add`. The dispatcher
 auto-commits after your session ends. Committing yourself creates a double-commit.
 

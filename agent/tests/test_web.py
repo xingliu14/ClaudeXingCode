@@ -140,7 +140,7 @@ class TestTaskDetailRoute:
         ]})
         resp = client.get("/tasks/1")
         assert resp.status_code == 200
-        assert b"blocked by #2" in resp.data
+        assert b"blocked(#2)" in resp.data
 
     def test_subtask_not_blocked_no_indicator(self, web_client):
         client, tf = web_client
@@ -153,7 +153,7 @@ class TestTaskDetailRoute:
         ]})
         resp = client.get("/tasks/1")
         assert resp.status_code == 200
-        assert b"blocked by" not in resp.data
+        assert b"blocked(" not in resp.data
 
 
 class TestApproveRoute:
@@ -354,7 +354,8 @@ class TestRetryRoute:
         client, tf = web_client
         write_tasks(tf, {"tasks": [{"id": 1, "status": "stopped", "prompt": "x",
                                     "priority": "medium", "stop_reason": "rejected",
-                                    "summary": "old", "plan": "old plan",
+                                    "summary": "old", "result": {"summary": "old", "artifacts": []},
+                                    "plan": "old plan",
                                     "retry_count": 3}]})
         resp = client.post("/tasks/1/retry")
         assert resp.status_code == 302
@@ -362,6 +363,7 @@ class TestRetryRoute:
         task = json.loads(tf.read_text())["tasks"][0]
         assert task["status"] == "pending"
         assert task["summary"] is None
+        assert task["result"] is None
         assert task["plan"] is None
         assert "stop_reason" not in task
         # retry_count must reset to 0, otherwise a doom-looped task that retries
@@ -399,6 +401,20 @@ class TestRetryRoute:
                                     "priority": "medium"}]})
         client.post("/tasks/1/retry")
         assert json.loads(tf.read_text())["tasks"][0]["status"] == "pending"
+
+    def test_result_struct_backward_compat_renders_summary(self, web_client):
+        """Task detail page renders result.summary via backward-compat template logic.
+        Seeds a done task with a typed result dict and verifies the summary text
+        appears in the rendered page (covers the 'task.get(result).get(summary)' path)."""
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "done", "prompt": "Some work",
+                                    "priority": "medium", "parent": None, "plan": None,
+                                    "summary": None,
+                                    "result": {"summary": "All done successfully",
+                                               "artifacts": []}}]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"All done successfully" in resp.data
 
 
 class TestDeleteRoute:

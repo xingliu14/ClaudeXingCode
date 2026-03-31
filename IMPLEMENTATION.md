@@ -5,12 +5,12 @@
 | Phase | Feature | Status |
 |-------|---------|--------|
 | 1  | Environment Setup | Done |
-| 2  | Core Instruction Files | Partial |
+| 2  | Core Instruction Files | Done (agent/CLAUDE.md needs human review) |
 | 3  | Task Queue | Done |
 | 4  | Dispatcher Core Loop | Partial |
 | 5  | Web UI | Partial |
 | 6  | Daily Email Digest | Code done, untested |
-| 7  | GitHub / Push Review | Partial |
+| 7  | GitHub / Push Review | Done |
 | 8  | Rate-Limit + Session Tracking | Done |
 | 9  | Structured Plan + Decomposition | Done |
 | 10 | Dependency Graph Enforcement | Partial |
@@ -25,14 +25,16 @@ Docker Desktop (v29.2.1), `agent/docker/Dockerfile` (Ubuntu 22.04, Node.js 20, C
 
 ---
 
-### Phase 2: Core Instruction Files — Partial
+### Phase 2: Core Instruction Files — Done (agent/CLAUDE.md needs human review)
 
-**TODO:**
-- [ ] `agent/dispatcher/CLAUDE.md` — dispatcher module guide (empty stub)
-- [ ] `agent/web/CLAUDE.md` — web module guide (empty stub)
-- [ ] `agent/core/CLAUDE.md` — core module guide (empty stub)
-- [ ] `agent/tests/CLAUDE.md` — test conventions guide (empty stub)
-- [ ] **Human action**: Update `agent/CLAUDE.md` — four stale descriptions since Phase 9 landed:
+- [x] `agent/dispatcher/CLAUDE.md` — populated (scheduling order, phase separation, env vars, decompose approval)
+- [x] `agent/web/CLAUDE.md` — populated (ownership boundary, AJAX polling, mutation rules)
+- [x] `agent/core/CLAUDE.md` — populated (locked_update, next_id, progress_logger)
+- [x] `agent/tests/CLAUDE.md` — populated (fixtures, subprocess mocking, file coverage table)
+- [ ] **Human action**: Fix `agent/web/CLAUDE.md` — two inaccuracies introduced during population:
+  - "polls `/tasks` (JSON) every 5 s" → should be `/api/tasks` every **3 s** (`POLL_MS = 3000`)
+  - Route docstring for `/progress` says "view PROGRESS.md" → actual file is `agent_log/agent_log.md`
+- [ ] **Human action**: Update `agent/CLAUDE.md` — stale descriptions (Phase 7 added `push_review` state):
   - State machine shows `done → decomposed` (should be `plan_review → decomposed`)
   - State machine shows `plan_review → (reject) → stopped` (should be `→ pending`; reject triggers re-plan loop, only cancel goes to stopped)
   - "Key design decisions" mentions single `model` field (code now uses `plan_model` / `exec_model`)
@@ -62,10 +64,10 @@ Core loop in `agent/dispatcher/dispatcher.py` is fully operational (tasks #1–#
 **Human-attention UI — Done:** Action Required banner (AJAX-updated, links to first review task); amber columns + header; amber card highlight + `[Review →]` button; nav `⚑ N` badge; elapsed time on running cards; Done column collapses by default (localStorage).
 
 **Task detail redesign — TODO:**
-- [ ] Two-column layout: left 60% (plan content + Approve/Reject), right 40% (metadata + subtask list)
-- [ ] Reject expands inline to feedback text field — no modal, no page navigation
-- [ ] Subtask list uses status icons: `✓ done · ⟳ running · ● review · ○ pending · ⊟ blocked(#id) · ⊘ stopped`
-- [ ] `decompose` plan rendered as a subtask tree with reasoning (not raw JSON)
+- [x] Two-column layout: left 60% (plan content + Approve/Reject), right 40% (metadata + subtask list)
+- [x] Reject expands inline to feedback text field — no modal, no page navigation
+- [x] Subtask list uses status icons: `✓ done · ⟳ running · ● review · ○ pending · ⊟ blocked(#id) · ⊘ stopped`
+- [x] `decompose` plan rendered as a subtask tree with reasoning (not raw JSON)
 - [ ] Artifact rendering per type: git_commit, document, text, code_diff, url_list (→ Phase 12)
 
 ---
@@ -79,11 +81,14 @@ Code complete (`agent/daily_digest.py`). Remaining:
 
 ---
 
-### Phase 7: GitHub / Push Review — Partial
+### Phase 7: GitHub / Push Review — Done
 
-Web UI routes done (`approve-push`, `reject-push`, Review Push column); `gh` CLI in Dockerfile; `GH_TOKEN`/git identity forwarded into container. Remaining:
-- [ ] `agent/dispatcher/dispatcher.py` — after git commit → set `push_review`; on approve → `git push`; on reject → skip push, mark `done`
-- [ ] `agent/docker/CLAUDE.md` — add push rules (do not push directly; `gh repo create` for new repos)
+Web UI routes done (`approve-push`, `reject-push`, Review Push column); `gh` CLI in Dockerfile; `GH_TOKEN`/git identity forwarded into container. Dispatcher flow:
+- After execution + git commit → task set to `push_review`; `on_task_complete` called (unblocks dependents)
+- `approve-push` web route → sets `push_approved=True`; dispatcher picks up, runs `git push`, sets `done` with `pushed_at`
+- `reject-push` web route → sets `done` directly (local commit only, no push)
+- Push failure resets `push_approved=False`; task stays in `push_review` for user retry or rejection
+- `agent/docker/CLAUDE.md` — push rules added: never push directly; use `gh repo create` for new repos
 
 ---
 
@@ -120,15 +125,15 @@ Plan phase outputs JSON `{"decision": "execute"|"decompose", ...}`; `parse_plan_
 
 Goal: replace flat `task.summary` with the typed `result` object and per-task artifact folders.
 
-- [ ] After execution: write `result: { summary, artifacts: [...] }` instead of flat `summary`
-- [ ] Create task artifact folder: `agent_log/tasks/task_N/` (root) or `agent_log/tasks/task_P/task_N/` (subtask)
-- [ ] Always write `result.md` to the task folder
+- [x] After execution: write `result: { summary, artifacts: [...] }` instead of flat `summary`
+- [x] Create task artifact folder: `agent_log/tasks/task_N/` (root) or `agent_log/tasks/task_P/task_N/` (subtask)
+- [x] Always write `result.md` to the task folder
 - [ ] Parse artifact types from CC's result JSON output: `git_commit`, `document`, `text`, `code_diff`, `url_list`
 - [ ] Auto-detect fallback: infer `git_commit` from git log, `text` vs `document` by length (< 500 chars inline, else write file)
 - [ ] Parent report (Phase 10): write to `agent_log/tasks/task_P/report.md`; reference as `document` artifact on parent
 - [ ] Web UI: render artifacts per type (git_commit hash, document collapsible, text inline, code_diff highlighted, url_list clickable)
-- [ ] Web UI: backward compat — render `task.result.summary or task.summary` for old tasks
-- [ ] Tests: update assertions from `task["summary"]` to `task["result"]["summary"]`
+- [x] Web UI: backward compat — render `task.result.summary or task.summary` for old tasks
+- [x] Tests: update assertions from `task["summary"]` to `task["result"]["summary"]`
 
 ---
 
@@ -145,6 +150,7 @@ ClaudeXingCode/
 +-- .claudeignore           <- exclude .env, secrets, build artifacts
 +-- .gitignore
 +-- agent_log/              <- ALL agent-generated output
+    +-- CLAUDE.md           <- agent_log module guide (empty stub)
     +-- agent_log.md        <- auto-generated activity log (rebuilt from entries.jsonl)
     +-- entries.jsonl       <- append-only JSONL backing store for agent_log.md
     +-- dispatcher_status.json  <- dispatcher state for web UI status dot
@@ -165,15 +171,16 @@ ClaudeXingCode/
         +-- CLAUDE.md           <- Execution Claude instructions (done)
     +-- dispatcher/
         +-- dispatcher.py   <- Ralph Loop core
-        +-- CLAUDE.md       <- dispatcher module guide (TODO: populate)
+        +-- CLAUDE.md       <- dispatcher module guide (done)
     +-- web/
         +-- web_manager.py  <- Flask UI
-        +-- CLAUDE.md       <- web module guide (TODO: populate)
+        +-- CLAUDE.md       <- web module guide (done)
     +-- core/
         +-- task_store.py   <- shared tasks.json helpers with file locking
         +-- progress_logger.py <- activity log writer (JSONL + agent_log.md rebuild)
-        +-- CLAUDE.md       <- core module guide (TODO: populate)
+        +-- CLAUDE.md       <- core module guide (done)
     +-- tests/
+        +-- __init__.py         <- empty; marks tests/ as a package for pytest
         +-- conftest.py         <- pytest fixtures (TASKS_FILE, sys.path wiring)
         +-- helpers.py          <- shared test utilities (write_tasks)
         +-- test_dispatcher.py  <- task picking, CC runners, git commit, status
@@ -200,8 +207,8 @@ ClaudeXingCode/
 2. [ ] Typed result + artifact folders + Web UI rendering (Phase 12)
 3. [ ] Parent report rollup when `unresolved_children == 0` (Phase 10)
 4. [ ] Daily email digest — configure crontab, verify delivery end-to-end (Phase 6)
-5. [ ] Push review dispatcher flow (`push_review` after commit, approve/reject routing) + `agent/docker/CLAUDE.md` push rules (Phase 7)
-6. [ ] Populate stub CLAUDE.md files + fix `agent/CLAUDE.md` stale content (Phase 2)
+5. [x] Push review dispatcher flow (`push_review` after commit, approve/reject routing) + `agent/docker/CLAUDE.md` push rules (Phase 7)
+6. [x] Populate stub CLAUDE.md files (Phase 2) — `agent/CLAUDE.md` stale content still needs human review
 7. [ ] *(Later)* Tailscale + iPhone access
 
 ---

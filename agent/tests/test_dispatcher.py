@@ -8,6 +8,7 @@ import task_store
 from dispatcher import (
     pick_next_task, pick_approved_task, pick_actionable_task,
     is_token_limit_error, parse_stream_json,
+    task_artifact_folder, write_result_md,
 )
 from helpers import write_tasks
 
@@ -449,3 +450,97 @@ class TestWriteStatus:
 
         status = json.loads((tmp_path / "status.json").read_text())
         assert status["task_id"] == 0
+
+
+class TestTaskArtifactFolder:
+    """task_artifact_folder builds the artifact path by walking the parent chain.
+
+    Root task N       → <WORKSPACE>/agent_log/tasks/task_N/
+    Subtask N (parent P) → <WORKSPACE>/agent_log/tasks/task_P/task_N/
+    Nested (grandparent G → parent P → child N)
+                      → <WORKSPACE>/agent_log/tasks/task_G/task_P/task_N/
+    """
+
+    def _setup(self, tmp_path, monkeypatch, tasks):
+        """Write tasks.json and redirect both WORKSPACE and TASKS_FILE to tmp_path."""
+        tf = tmp_path / "tasks.json"
+        write_tasks(tf, {"tasks": tasks})
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "WORKSPACE", str(tmp_path))
+
+    def test_root_task_path(self, tmp_path, monkeypatch):
+        """A task with no parent maps to agent_log/tasks/task_N/."""
+        self._setup(tmp_path, monkeypatch, [
+            {"id": 5, "status": "pending", "prompt": "root task"},
+        ])
+        expected = tmp_path / "agent_log" / "tasks" / "task_5"
+        assert task_artifact_folder(5) == expected
+
+    def test_one_level_subtask_path(self, tmp_path, monkeypatch):
+        """A subtask with parent P maps to agent_log/tasks/task_P/task_N/."""
+        self._setup(tmp_path, monkeypatch, [
+            {"id": 10, "status": "pending", "prompt": "parent"},
+            {"id": 20, "status": "pending", "prompt": "child", "parent": 10},
+        ])
+        expected = tmp_path / "agent_log" / "tasks" / "task_10" / "task_20"
+        assert task_artifact_folder(20) == expected
+
+    def test_two_level_nested_path(self, tmp_path, monkeypatch):
+        """A grandchild (G→P→N) maps to agent_log/tasks/task_G/task_P/task_N/."""
+        self._setup(tmp_path, monkeypatch, [
+            {"id": 1, "status": "pending", "prompt": "grandparent"},
+            {"id": 2, "status": "pending", "prompt": "parent", "parent": 1},
+            {"id": 3, "status": "pending", "prompt": "child", "parent": 2},
+        ])
+        expected = tmp_path / "agent_log" / "tasks" / "task_1" / "task_2" / "task_3"
+        assert task_artifact_folder(3) == expected
+
+
+class TestWriteResultMd:
+    """write_result_md creates the artifact folder and writes result.md."""
+
+    def _setup(self, tmp_path, monkeypatch, tasks):
+        tf = tmp_path / "tasks.json"
+        write_tasks(tf, {"tasks": tasks})
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "WORKSPACE", str(tmp_path))
+
+    def test_creates_folder_and_writes_result_md(self, tmp_path, monkeypatch):
+        """For a root task, creates the folder and writes result.md with the summary."""
+        self._setup(tmp_path, monkeypatch, [
+            {"id": 7, "status": "done", "prompt": "do something"},
+        ])
+        write_result_md(7, "All done!")
+
+        result_path = tmp_path / "agent_log" / "tasks" / "task_7" / "result.md"
+        assert result_path.exists(), "result.md should be created"
+        content = result_path.read_text()
+        assert "# Task #7 Result" in content
+        assert "All done!" in content
+
+    def test_write_result_md_nonfatal_on_broken_parent_chain(self, tmp_path, monkeypatch):
+        """Orphaned task (parent ID references a missing task) must not raise.
+
+        task_artifact_folder will include the orphan's own ID segment in the path
+        because the chain terminates when current_id is looked up but not found
+        (task_map.get returns None, so current_id becomes None immediately).
+        write_result_md catches all exceptions so the caller never sees a failure."""
+        self._setup(tmp_path, monkeypatch, [
+            # parent=999 does not exist in the task list
+            {"id": 42, "status": "pending", "prompt": "orphan", "parent": 999},
+        ])
+        # Must not raise even though parent 999 is missing
+        write_result_md(42, "orphan summary")
+
+        # The folder path for task 42 with missing parent 999:
+        # chain starts at 42, walks to parent=999 which is not in task_map,
+        # so current_id becomes None immediately for the next iteration.
+        # chain = [42, 999] reversed = [999, 42] — but 999 is not in task_map,
+        # so the loop exits after appending 42 then trying 999 (None lookup).
+        # Actually: chain = [42], then tries t=task_map.get(42) which has parent=999,
+        # so appends 999; then t=task_map.get(999)=None so current_id=None.
+        # chain = [42, 999] reversed = [999, 42].
+        # result_path = tasks_root / task_999 / task_42 / result.md
+        result_path = tmp_path / "agent_log" / "tasks" / "task_999" / "task_42" / "result.md"
+        assert result_path.exists(), "result.md should still be written despite broken chain"
+        assert "orphan summary" in result_path.read_text()
