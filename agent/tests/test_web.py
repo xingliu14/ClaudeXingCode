@@ -530,6 +530,73 @@ class TestEditTaskModels:
         assert task["exec_model"] == "sonnet"
 
 
+class TestArtifactRendering:
+    """GET /tasks/<id> — artifact section renders each type correctly."""
+
+    def _task(self, artifacts):
+        return {
+            "id": 1, "status": "done", "prompt": "Artifact task",
+            "priority": "medium", "parent": None, "plan": None,
+            "summary": None,
+            "result": {"summary": None, "artifacts": artifacts},
+        }
+
+    def test_no_artifacts_section_when_empty(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [self._task([])]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"<h2>Artifacts</h2>" not in resp.data
+
+    def test_git_commit_artifact_rendered(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [self._task([
+            {"type": "git_commit", "hash": "abc1234567890", "subject": "fix bug in parser"}
+        ])]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"abc12345" in resp.data       # first 8 chars of hash
+        assert b"fix bug in parser" in resp.data
+
+    def test_text_artifact_rendered(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [self._task([
+            {"type": "text", "content": "Hello artifact world"}
+        ])]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"Hello artifact world" in resp.data
+
+    def test_document_artifact_uses_details_tag(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [self._task([
+            {"type": "document", "content": "Long document content here"}
+        ])]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"<details" in resp.data
+        assert b"Long document content here" in resp.data
+
+    def test_code_diff_uses_pre_tag(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [self._task([
+            {"type": "code_diff", "content": "--- a/foo\n+++ b/foo\n@@ -1 +1 @@\n-old\n+new"}
+        ])]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"artifact-code-diff" in resp.data
+
+    def test_url_list_renders_anchor_tags(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [self._task([
+            {"type": "url_list", "urls": ["https://example.com", "https://docs.python.org"]}
+        ])]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b'<a href=' in resp.data
+        assert b"https://example.com" in resp.data
+
+
 class TestStatusRoute:
     def test_returns_idle_when_no_file(self, web_client):
         client, _ = web_client

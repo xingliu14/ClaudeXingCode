@@ -261,6 +261,81 @@ def parse_plan_decision(raw: str) -> dict:
     return {"decision": "execute", "plan": raw}
 
 
+_VALID_ARTIFACT_TYPES = {"git_commit", "document", "text", "code_diff", "url_list"}
+
+
+def auto_detect_artifacts(result: dict, session_start: datetime, workspace: str) -> None:
+    """Auto-detect artifacts when CC didn't output structured JSON (fallback path).
+
+    Only runs if result["artifacts"] is empty — never overwrites structured CC output.
+
+    1. Git commit detection: inspect git log since session_start in workspace.
+       Each commit found is added as a {"type": "git_commit", "hash": ..., "subject": ...}.
+       Git errors are silently ignored.
+    2. Text/document classification: if artifacts are STILL empty after the git check,
+       classify result["summary"] by length:
+         < 500 chars  → {"type": "text",     "content": summary}
+         >= 500 chars → {"type": "document", "content": summary}
+    """
+    if result["artifacts"]:
+        return
+
+    # --- git commit detection ---
+    git_result = subprocess.run(
+        ["git", "log", f"--after={session_start.isoformat()}", "--format=%H|%s"],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
+    if git_result.returncode == 0:
+        for line in git_result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("|", 1)
+            if len(parts) == 2:
+                commit_hash, subject = parts
+                result["artifacts"].append(
+                    {"type": "git_commit", "hash": commit_hash, "subject": subject}
+                )
+
+    # --- text/document classification (only if no artifacts found yet) ---
+    if not result["artifacts"]:
+        summary = result["summary"]
+        if len(summary) < 500:
+            result["artifacts"].append({"type": "text", "content": summary})
+        else:
+            result["artifacts"].append({"type": "document", "content": summary})
+
+
+def parse_result_artifacts(output: str) -> dict:
+    """
+    Parse CC's execution output as a structured result dict.
+    Strips markdown code fences (same logic as parse_plan_decision), then tries
+    to parse as JSON. If the JSON is a dict with a "summary" key, treat it as
+    a structured result and filter artifacts to only known types.
+    Falls back to raw-text treatment if parsing fails or the shape is wrong.
+    Always returns {"summary": str, "artifacts": list}.
+    """
+    text = output.strip()
+    fenced = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict) and "summary" in obj:
+            raw_artifacts = obj.get("artifacts") or []
+            artifacts = [
+                a for a in raw_artifacts
+                if isinstance(a, dict) and a.get("type") in _VALID_ARTIFACT_TYPES
+            ]
+            return {"summary": str(obj["summary"]), "artifacts": artifacts}
+    except (json.JSONDecodeError, ValueError):
+        pass
+    fallback = output[-2000:] if len(output) > 2000 else output
+    return {"summary": fallback, "artifacts": []}
+
+
 def run_cc_local(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     """
     Run Claude Code locally in plan mode (read-only, safe).
@@ -436,7 +511,7 @@ def write_result_md(task_id: int, summary: str) -> None:
         print(f"[dispatcher] Warning: could not write result.md for task #{task_id}: {exc}", flush=True)
 
 
-def on_task_complete(task_id: int) -> None:
+def on_task_complete(task_id: int) -> int | None:
     """
     Called when a task reaches `done`. Propagates completion through the dependency graph:
     1. Removes this task from `blocked_on` of sibling tasks that depend on it,
@@ -445,9 +520,11 @@ def on_task_complete(task_id: int) -> None:
 
     Both mutations run in a single locked_update for atomicity.
 
-    NOTE: Per DESIGN.md, when unresolved_children reaches 0 a parent report should
-    be generated — this is not yet implemented (TODO).
+    Returns the parent_id if the parent's unresolved_children just reached 0
+    (i.e., a rollup report should be generated), otherwise returns None.
     """
+    rollup_needed = [None]
+
     def mutate(data):
         task_map = {t["id"]: t for t in data["tasks"]}
         completed = task_map.get(task_id)
@@ -466,9 +543,83 @@ def on_task_complete(task_id: int) -> None:
         if parent_id is not None:
             parent = task_map.get(parent_id)
             if parent is not None:
-                parent["unresolved_children"] = max(0, parent.get("unresolved_children", 0) - 1)
+                new_count = max(0, parent.get("unresolved_children", 0) - 1)
+                parent["unresolved_children"] = new_count
+                if new_count == 0:
+                    rollup_needed[0] = parent_id
+
+        # Leaf task: propagate result summary directly as the report
+        if not completed.get("children"):
+            summary = completed.get("result", {}).get("summary")
+            if summary:
+                completed["report"] = summary
 
     locked_update(mutate)
+    return rollup_needed[0]
+
+
+def generate_parent_report(parent_id: int) -> None:
+    """Collect children summaries, run CC locally to synthesize parent.report,
+    write report.md to the artifact folder, and update parent.report in tasks.json.
+    Best-effort: errors are logged but never re-raised."""
+    data = load_tasks()
+    task_map = {t["id"]: t for t in data["tasks"]}
+    parent = task_map.get(parent_id)
+    if not parent:
+        return
+
+    # Collect summaries from children
+    parts = []
+    for child_id in (parent.get("children") or []):
+        child = task_map.get(child_id)
+        if not child:
+            continue
+        summary = (child.get("result") or {}).get("summary") or child.get("report") or ""
+        if summary:
+            parts.append(f"### Subtask #{child_id}: {child['prompt'][:80]}\n{summary}")
+
+    if not parts:
+        return
+
+    children_text = "\n\n".join(parts)
+    rollup_prompt = (
+        f"You are writing a consolidated report for a parent task whose subtasks have all completed.\n\n"
+        f"Parent task: {parent['prompt']}\n\n"
+        f"Subtask results:\n\n{children_text}\n\n"
+        f"Write a concise consolidated report summarising what was accomplished across all subtasks."
+    )
+
+    print(f"[dispatcher] Generating rollup report for parent #{parent_id}...", flush=True)
+    try:
+        _, report_text = run_cc_local(rollup_prompt)
+    except Exception as exc:
+        print(f"[dispatcher] Warning: CC rollup failed for #{parent_id}: {exc}", flush=True)
+        report_text = children_text  # fallback: concatenate children summaries
+
+    # Write report.md to the artifact folder
+    try:
+        folder = task_artifact_folder(parent_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "report.md").write_text(f"# Task #{parent_id} Report\n\n{report_text}\n")
+        print(f"[dispatcher] Wrote report.md for task #{parent_id}", flush=True)
+    except Exception as exc:
+        print(f"[dispatcher] Warning: could not write report.md for #{parent_id}: {exc}", flush=True)
+
+    # Persist report to tasks.json
+    def _set_report(data):
+        for t in data["tasks"]:
+            if t["id"] == parent_id:
+                t["report"] = report_text
+                break
+
+    locked_update(_set_report)
+
+    # Propagate completion up: this parent's report being set is its effective "completion"
+    # for the dependency graph. Signal on_task_complete so the grandparent's counter
+    # gets decremented and may trigger its own rollup.
+    grandparent_id = on_task_complete(parent_id)
+    if grandparent_id is not None:
+        generate_parent_report(grandparent_id)
 
 
 # ---------------------------------------------------------------------------
@@ -786,13 +937,16 @@ def execute_task(task: dict) -> None:
         return
 
     now = datetime.now(timezone.utc).isoformat()
-    summary = exec_output[-2000:] if len(exec_output) > 2000 else exec_output
-    result = {"summary": summary, "artifacts": []}
+    result = parse_result_artifacts(exec_output)
+    auto_detect_artifacts(result, session_start, WORKSPACE)
+    summary = result["summary"]
     write_result_md(task_id, summary)
     update_task(task_id, status="push_review", completed_at=now, result=result,
                 progress_action="awaiting push review",
                 progress_details=summary or "")
-    on_task_complete(task_id)
+    parent_id = on_task_complete(task_id)
+    if parent_id is not None:
+        generate_parent_report(parent_id)
     git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
     print(f"[dispatcher] Task #{task_id} complete — awaiting push review.", flush=True)
 

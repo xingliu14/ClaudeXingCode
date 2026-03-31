@@ -15,7 +15,7 @@
 | 9  | Structured Plan + Decomposition | Done |
 | 10 | Dependency Graph Enforcement | Partial |
 | 11 | Doom Loop Detection | Done |
-| 12 | Typed Result + Artifact Storage | TODO |
+| 12 | Typed Result + Artifact Storage | Done |
 
 ---
 
@@ -52,7 +52,7 @@ Docker Desktop (v29.2.1), `agent/docker/Dockerfile` (Ubuntu 22.04, Node.js 20, C
 
 Core loop in `agent/dispatcher/dispatcher.py` is fully operational (tasks #1–#3 completed). Two items remain as cross-phase dependencies:
 
-- [ ] Parent report rollup when `unresolved_children == 0` (→ Phase 10)
+- [x] Parent report rollup when `unresolved_children == 0` (→ Phase 10)
 - [ ] Write typed `result` object with artifacts, replaces flat `summary` truncation (→ Phase 12)
 
 ---
@@ -63,12 +63,12 @@ Core loop in `agent/dispatcher/dispatcher.py` is fully operational (tasks #1–#
 
 **Human-attention UI — Done:** Action Required banner (AJAX-updated, links to first review task); amber columns + header; amber card highlight + `[Review →]` button; nav `⚑ N` badge; elapsed time on running cards; Done column collapses by default (localStorage).
 
-**Task detail redesign — TODO:**
+**Task detail redesign — Done:**
 - [x] Two-column layout: left 60% (plan content + Approve/Reject), right 40% (metadata + subtask list)
 - [x] Reject expands inline to feedback text field — no modal, no page navigation
 - [x] Subtask list uses status icons: `✓ done · ⟳ running · ● review · ○ pending · ⊟ blocked(#id) · ⊘ stopped`
 - [x] `decompose` plan rendered as a subtask tree with reasoning (not raw JSON)
-- [ ] Artifact rendering per type: git_commit, document, text, code_diff, url_list (→ Phase 12)
+- [x] Artifact rendering per type: git_commit, document, text, code_diff, url_list (→ Phase 12)
 
 ---
 
@@ -108,9 +108,9 @@ Plan phase outputs JSON `{"decision": "execute"|"decompose", ...}`; `parse_plan_
 
 `pick_next_task` skips blocked tasks; `on_task_complete` clears dependents' `blocked_on` and decrements parent's `unresolved_children` atomically. Remaining:
 
-- [ ] When `unresolved_children == 0` — collect children's `result.summary`, run CC locally to generate `parent.report`, write to `agent_log/tasks/task_P/report.md`
-- [ ] Leaf task (no children): set `task.report = task.result.summary` directly on completion
-- [ ] Report rollup propagates up the tree recursively
+- [x] When `unresolved_children == 0` — collect children's `result.summary`, run CC locally to generate `parent.report`, write to `agent_log/tasks/task_P/report.md`
+- [x] Leaf task (no children): set `task.report = task.result.summary` directly on completion
+- [x] Report rollup propagates up the tree recursively
 - [ ] **UI:** decomposed task detail page shows consolidated `parent.report` (collapsible, markdown rendered)
 
 ---
@@ -121,17 +121,17 @@ Plan phase outputs JSON `{"decision": "execute"|"decompose", ...}`; `parse_plan_
 
 ---
 
-### Phase 12: Typed Result + Artifact Storage — TODO
+### Phase 12: Typed Result + Artifact Storage — Done (one item deferred to Phase 10)
 
 Goal: replace flat `task.summary` with the typed `result` object and per-task artifact folders.
 
 - [x] After execution: write `result: { summary, artifacts: [...] }` instead of flat `summary`
 - [x] Create task artifact folder: `agent_log/tasks/task_N/` (root) or `agent_log/tasks/task_P/task_N/` (subtask)
 - [x] Always write `result.md` to the task folder
-- [ ] Parse artifact types from CC's result JSON output: `git_commit`, `document`, `text`, `code_diff`, `url_list`
-- [ ] Auto-detect fallback: infer `git_commit` from git log, `text` vs `document` by length (< 500 chars inline, else write file)
-- [ ] Parent report (Phase 10): write to `agent_log/tasks/task_P/report.md`; reference as `document` artifact on parent
-- [ ] Web UI: render artifacts per type (git_commit hash, document collapsible, text inline, code_diff highlighted, url_list clickable)
+- [x] Parse artifact types from CC's result JSON output: `git_commit`, `document`, `text`, `code_diff`, `url_list`
+- [x] Auto-detect fallback: infer `git_commit` from git log, `text` vs `document` by length (< 500 chars inline, else write file)
+- [x] Parent report (Phase 10): write to `agent_log/tasks/task_P/report.md`; reference as `document` artifact on parent
+- [x] Web UI: render artifacts per type (git_commit hash, document collapsible, text inline, code_diff highlighted, url_list clickable)
 - [x] Web UI: backward compat — render `task.result.summary or task.summary` for old tasks
 - [x] Tests: update assertions from `task["summary"]` to `task["result"]["summary"]`
 
@@ -204,8 +204,8 @@ ClaudeXingCode/
 ## Remaining Work (Build Order)
 
 1. [ ] Human-attention UI + task detail redesign (Phase 5)
-2. [ ] Typed result + artifact folders + Web UI rendering (Phase 12)
-3. [ ] Parent report rollup when `unresolved_children == 0` (Phase 10)
+2. [x] Typed result + artifact folders + Web UI rendering (Phase 12)
+3. [x] Parent report rollup when `unresolved_children == 0` (Phase 10)
 4. [ ] Daily email digest — configure crontab, verify delivery end-to-end (Phase 6)
 5. [x] Push review dispatcher flow (`push_review` after commit, approve/reject routing) + `agent/docker/CLAUDE.md` push rules (Phase 7)
 6. [x] Populate stub CLAUDE.md files (Phase 2) — `agent/CLAUDE.md` stale content still needs human review

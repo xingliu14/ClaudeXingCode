@@ -530,6 +530,16 @@ DETAIL_HTML = """
                        border: 1px solid #ddd6fe; border-radius: 6px; font-size: 0.85rem; }
     .subtask-tree li .stnum { font-weight: 700; color: #6b21a8; margin-right: 0.4rem; }
     .subtask-tree li .stdep { font-size: 0.75rem; color: #888; margin-top: 0.2rem; }
+    /* Artifact rendering */
+    .artifact { margin: 0.5rem 0; padding: 0.5rem; border-radius: 4px; }
+    .artifact-git-commit { font-family: monospace; background: #f0f9ff; border: 1px solid #bae6fd; }
+    .artifact-hash { font-weight: bold; color: #0284c7; margin-right: 0.5rem; }
+    .artifact-text { background: #f9fafb; border: 1px solid #e5e7eb; white-space: pre-wrap; }
+    .artifact-document { background: #f9fafb; border: 1px solid #e5e7eb; }
+    .artifact-document pre { margin: 0.5rem 0 0; white-space: pre-wrap; }
+    .artifact-code-diff { background: #1e1e1e; color: #d4d4d4; padding: 0.75rem; border-radius: 4px; font-size: 0.8rem; overflow-x: auto; }
+    .artifact-url-list { margin: 0; padding-left: 1.2rem; }
+    .artifact-url-list a { color: #2563eb; }
   </style>
 </head>
 <body>
@@ -639,6 +649,27 @@ DETAIL_HTML = """
     {% if result_summary %}
     <h2>Result Summary</h2>
     <pre>{{ result_summary }}</pre>
+    {% endif %}
+
+    {# ---- Artifacts ---- #}
+    {% set artifacts = (task.get('result') or {}).get('artifacts') or [] %}
+    {% if artifacts %}
+    <h2>Artifacts</h2>
+    {% for a in artifacts %}
+      {% if a.get('type') == 'git_commit' %}
+      <div class="artifact artifact-git-commit"><span class="artifact-hash">{{ a.hash[:8] }}</span> {{ a.get('subject','') }}</div>
+      {% elif a.get('type') == 'text' %}
+      <div class="artifact artifact-text">{{ a.content }}</div>
+      {% elif a.get('type') == 'document' %}
+      <details class="artifact artifact-document"><summary>Document</summary><pre>{{ a.content }}</pre></details>
+      {% elif a.get('type') == 'code_diff' %}
+      <pre class="artifact artifact-code-diff">{{ a.content }}</pre>
+      {% elif a.get('type') == 'url_list' %}
+      <ul class="artifact artifact-url-list">{% for url in a.get('urls',[]) %}<li><a href="{{ url }}" target="_blank">{{ url }}</a></li>{% endfor %}</ul>
+      {% else %}
+      <div class="artifact artifact-unknown">{{ a | tojson }}</div>
+      {% endif %}
+    {% endfor %}
     {% endif %}
 
     {# ---- Edit form (hidden by default) ---- #}

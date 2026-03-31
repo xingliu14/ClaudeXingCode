@@ -120,6 +120,52 @@ class TestOnTaskComplete:
         assert tasks[3]["blocked_on"] == []          # sibling unblocked
         assert tasks[1]["unresolved_children"] == 1  # parent decremented
 
+    def test_leaf_task_sets_report_from_result_summary(self, tmp_path, monkeypatch):
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            {"id": 1, "status": "done", "parent": None, "children": [],
+             "dependents": [], "blocked_on": [],
+             "result": {"summary": "All done.", "details": "extra"}},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+
+        dispatcher.on_task_complete(1)
+
+        tasks = {t["id"]: t for t in json.loads(tf.read_text())["tasks"]}
+        assert tasks[1]["report"] == "All done."
+
+    def test_task_with_children_does_not_set_report(self, tmp_path, monkeypatch):
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            {"id": 1, "status": "decomposed", "parent": None, "children": [2],
+             "dependents": [], "blocked_on": [],
+             "result": {"summary": "Parent summary"}},
+            {"id": 2, "status": "done", "parent": 1, "children": [],
+             "dependents": [], "blocked_on": []},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+
+        dispatcher.on_task_complete(1)
+
+        tasks = {t["id"]: t for t in json.loads(tf.read_text())["tasks"]}
+        assert tasks[1].get("report") is None
+
+    def test_leaf_task_without_result_does_not_crash(self, tmp_path, monkeypatch):
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            {"id": 1, "status": "done", "parent": None, "children": [],
+             "dependents": [], "blocked_on": []},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+
+        dispatcher.on_task_complete(1)  # must not raise
+
+        tasks = {t["id"]: t for t in json.loads(tf.read_text())["tasks"]}
+        assert tasks[1].get("report") is None
+
     def test_backward_compat_missing_dependents_field(self, tmp_path, monkeypatch):
         """Tasks without `dependents` (old schema) must not crash on_task_complete."""
         tf = tmp_path / "tasks.json"
@@ -204,3 +250,258 @@ class TestDependencyGraphIntegration:
 
         tasks = {t["id"]: t for t in json.loads(tf.read_text())["tasks"]}
         assert tasks[1]["unresolved_children"] == 0
+
+
+class TestGenerateParentReport:
+    """Tests for on_task_complete return value and generate_parent_report."""
+
+    def test_on_task_complete_returns_parent_id_when_unresolved_hits_zero(
+        self, tmp_path, monkeypatch
+    ):
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            {"id": 1, "status": "decomposed", "unresolved_children": 1,
+             "children": [2], "parent": None, "dependents": [], "blocked_on": []},
+            {"id": 2, "status": "done", "parent": 1,
+             "dependents": [], "blocked_on": [], "children": []},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+
+        result = dispatcher.on_task_complete(2)
+
+        assert result == 1
+
+    def test_on_task_complete_returns_none_when_parent_still_has_children(
+        self, tmp_path, monkeypatch
+    ):
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            {"id": 1, "status": "decomposed", "unresolved_children": 2,
+             "children": [2, 3], "parent": None, "dependents": [], "blocked_on": []},
+            {"id": 2, "status": "done", "parent": 1,
+             "dependents": [], "blocked_on": [], "children": []},
+            {"id": 3, "status": "pending", "parent": 1,
+             "dependents": [], "blocked_on": [], "children": []},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+
+        result = dispatcher.on_task_complete(2)
+
+        assert result is None
+
+    def test_on_task_complete_returns_none_when_no_parent(self, tmp_path, monkeypatch):
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            {"id": 5, "status": "done", "parent": None,
+             "dependents": [], "blocked_on": [], "children": []},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+
+        result = dispatcher.on_task_complete(5)
+
+        assert result is None
+
+    def test_generate_parent_report_sets_report_field(self, tmp_path, monkeypatch):
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            {"id": 1, "status": "decomposed", "prompt": "parent task",
+             "children": [2, 3], "parent": None,
+             "unresolved_children": 0},
+            {"id": 2, "status": "done", "parent": 1, "prompt": "subtask A",
+             "children": [], "result": {"summary": "A done"}},
+            {"id": 3, "status": "done", "parent": 1, "prompt": "subtask B",
+             "children": [], "result": {"summary": "B done"}},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "WORKSPACE", str(tmp_path))
+
+        def mock_cc(prompt, model=None):
+            return (0, "Rollup text")
+
+        monkeypatch.setattr(dispatcher, "run_cc_local", mock_cc)
+
+        dispatcher.generate_parent_report(1)
+
+        tasks = {t["id"]: t for t in json.loads(tf.read_text())["tasks"]}
+        assert tasks[1]["report"] == "Rollup text"
+
+    def test_generate_parent_report_writes_report_md(self, tmp_path, monkeypatch):
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            {"id": 1, "status": "decomposed", "prompt": "parent task",
+             "children": [2, 3], "parent": None,
+             "unresolved_children": 0},
+            {"id": 2, "status": "done", "parent": 1, "prompt": "subtask A",
+             "children": [], "result": {"summary": "A done"}},
+            {"id": 3, "status": "done", "parent": 1, "prompt": "subtask B",
+             "children": [], "result": {"summary": "B done"}},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "WORKSPACE", str(tmp_path))
+
+        def mock_cc(prompt, model=None):
+            return (0, "Rollup text")
+
+        monkeypatch.setattr(dispatcher, "run_cc_local", mock_cc)
+
+        dispatcher.generate_parent_report(1)
+
+        report_md = tmp_path / "agent_log" / "tasks" / "task_1" / "report.md"
+        assert report_md.exists()
+        assert "Rollup text" in report_md.read_text()
+
+    def test_generate_parent_report_fallback_when_cc_fails(self, tmp_path, monkeypatch):
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            {"id": 1, "status": "decomposed", "prompt": "parent task",
+             "children": [2, 3], "parent": None,
+             "unresolved_children": 0},
+            {"id": 2, "status": "done", "parent": 1, "prompt": "subtask A",
+             "children": [], "result": {"summary": "A done"}},
+            {"id": 3, "status": "done", "parent": 1, "prompt": "subtask B",
+             "children": [], "result": {"summary": "B done"}},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "WORKSPACE", str(tmp_path))
+
+        def mock_cc_fail(prompt, model=None):
+            raise Exception("CC failed")
+
+        monkeypatch.setattr(dispatcher, "run_cc_local", mock_cc_fail)
+
+        # Must not raise
+        dispatcher.generate_parent_report(1)
+
+        tasks = {t["id"]: t for t in json.loads(tf.read_text())["tasks"]}
+        # Fallback: report is set to concatenated children summaries
+        assert tasks[1].get("report") is not None
+        assert "A done" in tasks[1]["report"] or "B done" in tasks[1]["report"]
+
+    def test_generate_parent_report_skips_when_no_children_with_summaries(
+        self, tmp_path, monkeypatch
+    ):
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            {"id": 1, "status": "decomposed", "prompt": "parent task",
+             "children": [2, 3], "parent": None,
+             "unresolved_children": 0},
+            {"id": 2, "status": "done", "parent": 1, "prompt": "subtask A",
+             "children": []},
+            {"id": 3, "status": "done", "parent": 1, "prompt": "subtask B",
+             "children": []},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "WORKSPACE", str(tmp_path))
+
+        cc_called = [False]
+
+        def mock_cc(prompt, model=None):
+            cc_called[0] = True
+            return (0, "Should not be called")
+
+        monkeypatch.setattr(dispatcher, "run_cc_local", mock_cc)
+
+        dispatcher.generate_parent_report(1)
+
+        assert not cc_called[0]
+        tasks = {t["id"]: t for t in json.loads(tf.read_text())["tasks"]}
+        assert tasks[1].get("report") is None
+
+    def test_recursive_rollup_propagates_to_grandparent(self, tmp_path, monkeypatch):
+        """3-level tree: after A's rollup is written, P's counter should decrement
+        and P's rollup should fire automatically."""
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            # P: root, waiting on A only (B already resolved, so unresolved_children=1)
+            {"id": 1, "status": "decomposed", "prompt": "root task P",
+             "children": [2], "parent": None, "unresolved_children": 1,
+             "dependents": [], "blocked_on": []},
+            # A: decomposed, all children already resolved
+            {"id": 2, "status": "decomposed", "prompt": "mid task A",
+             "children": [3], "parent": 1, "unresolved_children": 0,
+             "dependents": [], "blocked_on": []},
+            # A1: leaf, done
+            {"id": 3, "status": "done", "prompt": "leaf A1",
+             "children": [], "parent": 2,
+             "dependents": [], "blocked_on": [],
+             "result": {"summary": "leaf done"}},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "WORKSPACE", str(tmp_path))
+
+        cc_call_count = [0]
+        cc_responses = ["A rollup", "P rollup"]
+
+        def mock_cc(prompt, model=None):
+            idx = cc_call_count[0]
+            cc_call_count[0] += 1
+            return (0, cc_responses[idx])
+
+        monkeypatch.setattr(dispatcher, "run_cc_local", mock_cc)
+
+        # Trigger A's rollup — should chain up to P
+        dispatcher.generate_parent_report(2)
+
+        tasks = {t["id"]: t for t in json.loads(tf.read_text())["tasks"]}
+        # A (id=2) should have its report set
+        assert tasks[2].get("report") == "A rollup"
+        # P (id=1) should have its report set via the recursive call
+        assert tasks[1].get("report") == "P rollup"
+        # CC was called exactly twice
+        assert cc_call_count[0] == 2
+
+    def test_recursive_rollup_stops_when_grandparent_still_has_children(
+        self, tmp_path, monkeypatch
+    ):
+        """When P still has an unresolved sibling (B), generating A's report must
+        NOT trigger P's rollup."""
+        tf = tmp_path / "tasks.json"
+        data = {"tasks": [
+            # P: root, unresolved_children=2 (A and B both outstanding)
+            {"id": 1, "status": "decomposed", "prompt": "root task P",
+             "children": [2, 4], "parent": None, "unresolved_children": 2,
+             "dependents": [], "blocked_on": []},
+            # A: decomposed, all own children resolved
+            {"id": 2, "status": "decomposed", "prompt": "mid task A",
+             "children": [3], "parent": 1, "unresolved_children": 0,
+             "dependents": [], "blocked_on": []},
+            # A1: leaf, done
+            {"id": 3, "status": "done", "prompt": "leaf A1",
+             "children": [], "parent": 2,
+             "dependents": [], "blocked_on": [],
+             "result": {"summary": "leaf"}},
+            # B: pending sibling of A, not done yet
+            {"id": 4, "status": "pending", "prompt": "sibling B",
+             "children": [], "parent": 1,
+             "dependents": [], "blocked_on": []},
+        ]}
+        write_tasks(tf, data)
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "WORKSPACE", str(tmp_path))
+
+        cc_call_count = [0]
+
+        def mock_cc(prompt, model=None):
+            cc_call_count[0] += 1
+            return (0, "A rollup")
+
+        monkeypatch.setattr(dispatcher, "run_cc_local", mock_cc)
+
+        dispatcher.generate_parent_report(2)
+
+        tasks = {t["id"]: t for t in json.loads(tf.read_text())["tasks"]}
+        # A's rollup was generated
+        assert tasks[2].get("report") == "A rollup"
+        # P's unresolved_children went from 2 → 1, not 0, so no P rollup
+        assert tasks[1].get("report") is None
+        assert tasks[1]["unresolved_children"] == 1
+        # CC was called exactly once (only for A)
+        assert cc_call_count[0] == 1

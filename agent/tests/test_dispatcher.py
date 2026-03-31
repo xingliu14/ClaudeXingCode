@@ -2,6 +2,7 @@
 
 import json
 import pytest
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 import dispatcher
 import task_store
@@ -9,6 +10,7 @@ from dispatcher import (
     pick_next_task, pick_approved_task, pick_actionable_task,
     is_token_limit_error, parse_stream_json,
     task_artifact_folder, write_result_md,
+    parse_result_artifacts, auto_detect_artifacts,
 )
 from helpers import write_tasks
 
@@ -544,3 +546,202 @@ class TestWriteResultMd:
         result_path = tmp_path / "agent_log" / "tasks" / "task_999" / "task_42" / "result.md"
         assert result_path.exists(), "result.md should still be written despite broken chain"
         assert "orphan summary" in result_path.read_text()
+
+
+class TestParseResultArtifacts:
+    """parse_result_artifacts parses CC's execution output into a structured result.
+    Falls back to raw-text treatment when JSON parsing fails or shape is wrong."""
+
+    def test_plain_text_returns_summary_and_empty_artifacts(self):
+        """Raw text input produces summary equal to that text and an empty artifacts list."""
+        result = parse_result_artifacts("Task completed successfully.")
+        assert result == {"summary": "Task completed successfully.", "artifacts": []}
+
+    def test_valid_json_with_artifacts_parsed(self):
+        """Valid JSON with summary and known artifact type is parsed as-is."""
+        payload = json.dumps({
+            "summary": "did X",
+            "artifacts": [{"type": "git_commit", "hash": "abc123"}],
+        })
+        result = parse_result_artifacts(payload)
+        assert result["summary"] == "did X"
+        assert result["artifacts"] == [{"type": "git_commit", "hash": "abc123"}]
+
+    def test_json_with_all_valid_artifact_types(self):
+        """All five valid artifact types are preserved when present together."""
+        artifacts = [
+            {"type": "git_commit", "hash": "aaa"},
+            {"type": "document", "title": "report"},
+            {"type": "text", "content": "some text"},
+            {"type": "code_diff", "diff": "--- a\n+++ b"},
+            {"type": "url_list", "urls": ["https://example.com"]},
+        ]
+        payload = json.dumps({"summary": "all types", "artifacts": artifacts})
+        result = parse_result_artifacts(payload)
+        assert len(result["artifacts"]) == 5
+        types = {a["type"] for a in result["artifacts"]}
+        assert types == {"git_commit", "document", "text", "code_diff", "url_list"}
+
+    def test_json_with_unknown_artifact_type_filtered_out(self):
+        """An artifact with an unknown type is removed; valid ones are kept."""
+        payload = json.dumps({
+            "summary": "mixed",
+            "artifacts": [
+                {"type": "git_commit", "hash": "abc"},
+                {"type": "blob", "data": "ignored"},
+                {"type": "text", "content": "kept"},
+            ],
+        })
+        result = parse_result_artifacts(payload)
+        assert len(result["artifacts"]) == 2
+        types = {a["type"] for a in result["artifacts"]}
+        assert types == {"git_commit", "text"}
+
+    def test_markdown_fenced_json_parsed(self):
+        """JSON wrapped in ```json...``` fences is unwrapped and parsed correctly."""
+        payload = '```json\n{"summary": "fenced", "artifacts": []}\n```'
+        result = parse_result_artifacts(payload)
+        assert result == {"summary": "fenced", "artifacts": []}
+
+    def test_long_text_fallback_truncated_to_2000(self):
+        """Raw text longer than 2000 chars falls back with summary = last 2000 chars."""
+        long_text = "x" * 1500 + "y" * 1000  # 2500 chars total
+        result = parse_result_artifacts(long_text)
+        assert result["artifacts"] == []
+        assert len(result["summary"]) == 2000
+        assert result["summary"] == long_text[-2000:]
+
+    def test_json_missing_summary_key_falls_back(self):
+        """JSON dict without a 'summary' key triggers the raw-text fallback."""
+        payload = json.dumps({"artifacts": [{"type": "git_commit", "hash": "abc"}]})
+        result = parse_result_artifacts(payload)
+        assert result["artifacts"] == []
+        assert result["summary"] == payload
+
+    def test_json_artifacts_null_treated_as_empty(self):
+        """artifacts: null in JSON should not crash — treated as an empty list."""
+        payload = json.dumps({"summary": "done", "artifacts": None})
+        result = parse_result_artifacts(payload)
+        assert result["summary"] == "done"
+        assert result["artifacts"] == []
+
+
+class TestAutoDetectArtifacts:
+    """auto_detect_artifacts fills in artifacts when CC didn't output structured JSON.
+
+    Only runs when result["artifacts"] is empty. Detects git commits made since
+    session_start, then falls back to text/document classification by summary length.
+    """
+
+    _SESSION_START = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    def _empty_result(self, summary="short summary"):
+        return {"summary": summary, "artifacts": []}
+
+    def test_skips_when_artifacts_already_present(self, monkeypatch):
+        """If result already has artifacts, auto_detect must not modify them."""
+        existing = [{"type": "git_commit", "hash": "abc", "subject": "existing"}]
+        result = {"summary": "done", "artifacts": list(existing)}
+
+        called = []
+        monkeypatch.setattr(dispatcher.subprocess, "run",
+                            lambda *a, **kw: called.append(1) or MagicMock(returncode=0, stdout=""))
+
+        auto_detect_artifacts(result, self._SESSION_START, "/fake/workspace")
+
+        assert called == [], "subprocess.run should not be called when artifacts already present"
+        assert result["artifacts"] == existing
+
+    def test_adds_git_commit_artifact_from_log(self, monkeypatch):
+        """Monkeypatched git log returning one commit produces one git_commit artifact."""
+        result = self._empty_result()
+
+        mock_run = MagicMock(return_value=MagicMock(
+            returncode=0,
+            stdout="deadbeef|Add feature X\n",
+        ))
+        monkeypatch.setattr(dispatcher.subprocess, "run", mock_run)
+
+        auto_detect_artifacts(result, self._SESSION_START, "/fake/workspace")
+
+        assert len(result["artifacts"]) == 1
+        artifact = result["artifacts"][0]
+        assert artifact["type"] == "git_commit"
+        assert artifact["hash"] == "deadbeef"
+        assert artifact["subject"] == "Add feature X"
+
+    def test_adds_multiple_git_commits(self, monkeypatch):
+        """Git log with two commits produces two git_commit artifacts in order."""
+        result = self._empty_result()
+
+        mock_run = MagicMock(return_value=MagicMock(
+            returncode=0,
+            stdout="aaa111|First commit\nbbb222|Second commit\n",
+        ))
+        monkeypatch.setattr(dispatcher.subprocess, "run", mock_run)
+
+        auto_detect_artifacts(result, self._SESSION_START, "/fake/workspace")
+
+        assert len(result["artifacts"]) == 2
+        assert result["artifacts"][0] == {"type": "git_commit", "hash": "aaa111", "subject": "First commit"}
+        assert result["artifacts"][1] == {"type": "git_commit", "hash": "bbb222", "subject": "Second commit"}
+
+    def test_git_error_is_silent(self, monkeypatch):
+        """subprocess.run returning returncode=1 must not crash; git artifacts skipped."""
+        result = self._empty_result("short")
+
+        mock_run = MagicMock(return_value=MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="not a git repository",
+        ))
+        monkeypatch.setattr(dispatcher.subprocess, "run", mock_run)
+
+        auto_detect_artifacts(result, self._SESSION_START, "/fake/workspace")
+
+        # No git_commit artifacts — only the text fallback from the short summary
+        git_artifacts = [a for a in result["artifacts"] if a["type"] == "git_commit"]
+        assert git_artifacts == []
+
+    def test_adds_text_artifact_for_short_summary(self, monkeypatch):
+        """No git commits and summary < 500 chars → text artifact with summary as content."""
+        short_summary = "Task done."
+        result = self._empty_result(short_summary)
+
+        mock_run = MagicMock(return_value=MagicMock(returncode=0, stdout=""))
+        monkeypatch.setattr(dispatcher.subprocess, "run", mock_run)
+
+        auto_detect_artifacts(result, self._SESSION_START, "/fake/workspace")
+
+        assert len(result["artifacts"]) == 1
+        assert result["artifacts"][0] == {"type": "text", "content": short_summary}
+
+    def test_adds_document_artifact_for_long_summary(self, monkeypatch):
+        """No git commits and summary >= 500 chars → document artifact with summary as content."""
+        long_summary = "A" * 500
+        result = self._empty_result(long_summary)
+
+        mock_run = MagicMock(return_value=MagicMock(returncode=0, stdout=""))
+        monkeypatch.setattr(dispatcher.subprocess, "run", mock_run)
+
+        auto_detect_artifacts(result, self._SESSION_START, "/fake/workspace")
+
+        assert len(result["artifacts"]) == 1
+        assert result["artifacts"][0] == {"type": "document", "content": long_summary}
+
+    def test_no_text_artifact_when_git_commits_found(self, monkeypatch):
+        """When git commits are detected, no text/document artifact is added."""
+        result = self._empty_result("short summary")
+
+        mock_run = MagicMock(return_value=MagicMock(
+            returncode=0,
+            stdout="cafebabe|Fix bug\n",
+        ))
+        monkeypatch.setattr(dispatcher.subprocess, "run", mock_run)
+
+        auto_detect_artifacts(result, self._SESSION_START, "/fake/workspace")
+
+        types = [a["type"] for a in result["artifacts"]]
+        assert "text" not in types
+        assert "document" not in types
+        assert types == ["git_commit"]
