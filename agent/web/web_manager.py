@@ -158,7 +158,7 @@ BOARD_HTML = """
     /* --- Add form --- */
     form.add { padding: 0 1rem 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
     form.add textarea { flex: 1; min-width: 200px; padding: 0.5rem; border-radius: 6px;
-                        border: 1px solid #ccc; font-size: 0.9rem; }
+                        border: 1px solid #ccc; font-size: 0.9rem; resize: none; overflow: hidden; }
     form.add select, form.add button { padding: 0.5rem; border-radius: 6px; border: 1px solid #ccc; }
     form.add button { background: #1a1a2e; color: #fff; border: none; cursor: pointer; }
     .toolbar { padding: 0 1rem 0.5rem; display: flex; gap: 0.5rem; align-items: center; }
@@ -191,7 +191,8 @@ BOARD_HTML = """
 """ + HEADER_HTML + """
 
 <form class="add" method="post" action="/tasks">
-  <textarea name="prompt" rows="2" placeholder="New task... (speak or type)" required></textarea>
+  <textarea name="prompt" rows="2" placeholder="New task... (speak or type)" required
+    oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
   <select name="priority">
     <option value="medium">Medium</option>
     <option value="high">High</option>
@@ -533,13 +534,19 @@ DETAIL_HTML = """
     /* Artifact rendering */
     .artifact { margin: 0.5rem 0; padding: 0.5rem; border-radius: 4px; }
     .artifact-git-commit { font-family: monospace; background: #f0f9ff; border: 1px solid #bae6fd; }
-    .artifact-hash { font-weight: bold; color: #0284c7; margin-right: 0.5rem; }
+    .artifact-ref { font-weight: bold; color: #0284c7; margin-right: 0.5rem; }
     .artifact-text { background: #f9fafb; border: 1px solid #e5e7eb; white-space: pre-wrap; }
     .artifact-document { background: #f9fafb; border: 1px solid #e5e7eb; }
     .artifact-document pre { margin: 0.5rem 0 0; white-space: pre-wrap; }
+    .artifact-doc-path { padding: 0.4rem 0.5rem; font-size: 0.82rem; color: #555; }
     .artifact-code-diff { background: #1e1e1e; color: #d4d4d4; padding: 0.75rem; border-radius: 4px; font-size: 0.8rem; overflow-x: auto; }
     .artifact-url-list { margin: 0; padding-left: 1.2rem; }
     .artifact-url-list a { color: #2563eb; }
+    /* Report rendering (decomposed parent tasks) */
+    .report-card { margin: 1rem 0; border: 1px solid #d1fae5; border-radius: 6px; background: #f0fdf4; }
+    .report-card summary { padding: 0.6rem 0.8rem; cursor: pointer; font-weight: 600; color: #065f46; }
+    .report-card summary:hover { background: #dcfce7; border-radius: 6px; }
+    .report-content { margin: 0; padding: 0.8rem; white-space: pre-wrap; font-size: 0.85rem; border-top: 1px solid #d1fae5; }
   </style>
 </head>
 <body>
@@ -644,6 +651,15 @@ DETAIL_HTML = """
     {% endif %}
     {% endif %}
 
+    {# ---- Report (decomposed parent tasks) ---- #}
+    {% if task.get('report') %}
+    <h2>Report</h2>
+    <details class="report-card" open>
+      <summary>Consolidated report from all subtasks</summary>
+      <pre class="report-content">{{ task.report }}</pre>
+    </details>
+    {% endif %}
+
     {# ---- Result Summary ---- #}
     {% set result_summary = (task.get('result') or {}).get('summary') or task.get('summary') %}
     {% if result_summary %}
@@ -657,15 +673,15 @@ DETAIL_HTML = """
     <h2>Artifacts</h2>
     {% for a in artifacts %}
       {% if a.get('type') == 'git_commit' %}
-      <div class="artifact artifact-git-commit"><span class="artifact-hash">{{ a.hash[:8] }}</span> {{ a.get('subject','') }}</div>
+      <div class="artifact artifact-git-commit"><span class="artifact-ref">{{ a.ref[:8] }}</span> {{ a.get('message','') }}</div>
       {% elif a.get('type') == 'text' %}
       <div class="artifact artifact-text">{{ a.content }}</div>
       {% elif a.get('type') == 'document' %}
-      <details class="artifact artifact-document"><summary>Document</summary><pre>{{ a.content }}</pre></details>
+      <details class="artifact artifact-document"><summary>{{ a.get('title','Document') }}</summary>{% if a.get('content') %}<pre>{{ a.content }}</pre>{% elif a.get('path') %}<div class="artifact-doc-path">📄 <code>{{ a.path }}</code></div>{% endif %}</details>
       {% elif a.get('type') == 'code_diff' %}
       <pre class="artifact artifact-code-diff">{{ a.content }}</pre>
       {% elif a.get('type') == 'url_list' %}
-      <ul class="artifact artifact-url-list">{% for url in a.get('urls',[]) %}<li><a href="{{ url }}" target="_blank">{{ url }}</a></li>{% endfor %}</ul>
+      <ul class="artifact artifact-url-list">{% for item in a.get('items',[]) %}{% set url = item.get('url','') if item is mapping else item %}{% set title = item.get('title', url) if item is mapping else url %}<li>{% if url.startswith('http://') or url.startswith('https://') %}<a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ title or url }}</a>{% if item is mapping and item.get('note') %} — {{ item.note }}{% endif %}{% else %}{{ url }}{% endif %}</li>{% endfor %}</ul>
       {% else %}
       <div class="artifact artifact-unknown">{{ a | tojson }}</div>
       {% endif %}

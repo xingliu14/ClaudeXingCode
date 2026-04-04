@@ -551,11 +551,11 @@ class TestArtifactRendering:
     def test_git_commit_artifact_rendered(self, web_client):
         client, tf = web_client
         write_tasks(tf, {"tasks": [self._task([
-            {"type": "git_commit", "hash": "abc1234567890", "subject": "fix bug in parser"}
+            {"type": "git_commit", "ref": "abc1234567890", "message": "fix bug in parser"}
         ])]})
         resp = client.get("/tasks/1")
         assert resp.status_code == 200
-        assert b"abc12345" in resp.data       # first 8 chars of hash
+        assert b"abc12345" in resp.data       # first 8 chars of ref
         assert b"fix bug in parser" in resp.data
 
     def test_text_artifact_rendered(self, web_client):
@@ -589,12 +589,48 @@ class TestArtifactRendering:
     def test_url_list_renders_anchor_tags(self, web_client):
         client, tf = web_client
         write_tasks(tf, {"tasks": [self._task([
-            {"type": "url_list", "urls": ["https://example.com", "https://docs.python.org"]}
+            {"type": "url_list", "items": [
+                {"url": "https://example.com", "title": "Example", "note": ""},
+                {"url": "https://docs.python.org", "title": "Python Docs", "note": ""},
+            ]}
         ])]})
         resp = client.get("/tasks/1")
         assert resp.status_code == 200
         assert b'<a href=' in resp.data
         assert b"https://example.com" in resp.data
+
+    def test_url_list_has_noopener_noreferrer(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [self._task([
+            {"type": "url_list", "items": [
+                {"url": "https://example.com", "title": "Example", "note": ""},
+            ]}
+        ])]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b'rel="noopener noreferrer"' in resp.data
+
+    def test_url_list_blocks_javascript_scheme(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [self._task([
+            {"type": "url_list", "items": [
+                {"url": "javascript:alert(1)", "title": "", "note": ""},
+            ]}
+        ])]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b'href="javascript:' not in resp.data
+        assert b"javascript:alert(1)" in resp.data
+
+    def test_document_artifact_shows_path_when_file_based(self, web_client):
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [self._task([
+            {"type": "document", "path": "agent_log/tasks/task_1/document_1.md", "title": "My Doc"}
+        ])]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"<details" in resp.data
+        assert b"agent_log/tasks/task_1/document_1.md" in resp.data
 
 
 class TestStatusRoute:
@@ -603,3 +639,45 @@ class TestStatusRoute:
         resp = client.get("/status")
         assert resp.status_code == 200
         assert resp.get_json()["state"] == "idle"
+
+
+class TestReportDisplay:
+    """GET /tasks/<id> — Report section visibility based on task.report field."""
+
+    def test_report_section_shown_when_report_set(self, web_client):
+        """Decomposed task with a report shows the consolidated report section."""
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{
+            "id": 1, "status": "decomposed", "prompt": "Big task",
+            "priority": "medium", "parent": None, "plan": None,
+            "summary": None, "report": "All subtasks completed.",
+        }]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"Consolidated report from all subtasks" in resp.data
+        assert b"All subtasks completed." in resp.data
+
+    def test_report_section_hidden_when_no_report(self, web_client):
+        """Task with no report field should not render the report section."""
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{
+            "id": 1, "status": "decomposed", "prompt": "Big task",
+            "priority": "medium", "parent": None, "plan": None,
+            "summary": None,
+        }]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"Consolidated report" not in resp.data
+
+    def test_report_shows_on_non_decomposed_task_too(self, web_client):
+        """The report guard is status-agnostic: any task with report set shows it."""
+        client, tf = web_client
+        write_tasks(tf, {"tasks": [{
+            "id": 1, "status": "done", "prompt": "Some task",
+            "priority": "medium", "parent": None, "plan": None,
+            "summary": None, "report": "Finished with flying colours.",
+        }]})
+        resp = client.get("/tasks/1")
+        assert resp.status_code == 200
+        assert b"Consolidated report from all subtasks" in resp.data
+        assert b"Finished with flying colours." in resp.data

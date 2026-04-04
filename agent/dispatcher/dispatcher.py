@@ -270,7 +270,7 @@ def auto_detect_artifacts(result: dict, session_start: datetime, workspace: str)
     Only runs if result["artifacts"] is empty — never overwrites structured CC output.
 
     1. Git commit detection: inspect git log since session_start in workspace.
-       Each commit found is added as a {"type": "git_commit", "hash": ..., "subject": ...}.
+       Each commit found is added as a {"type": "git_commit", "ref": ..., "message": ...}.
        Git errors are silently ignored.
     2. Text/document classification: if artifacts are STILL empty after the git check,
        classify result["summary"] by length:
@@ -296,7 +296,7 @@ def auto_detect_artifacts(result: dict, session_start: datetime, workspace: str)
             if len(parts) == 2:
                 commit_hash, subject = parts
                 result["artifacts"].append(
-                    {"type": "git_commit", "hash": commit_hash, "subject": subject}
+                    {"type": "git_commit", "ref": commit_hash, "message": subject}
                 )
 
     # --- text/document classification (only if no artifacts found yet) ---
@@ -849,6 +849,32 @@ def plan_task(task: dict) -> None:
         print(f"[dispatcher] Task #{task_id} plan ready for review ({decision['decision']}).", flush=True)
 
 
+def _materialize_document_artifacts(result: dict, task_id: int) -> None:
+    """Write inline document artifact content to files and replace content with path.
+
+    Document artifacts from CC or auto-detect may have content stored inline.
+    Per the result format spec, large content lives in the task artifact folder.
+    Errors are logged but never re-raised."""
+    for i, artifact in enumerate(result.get("artifacts") or []):
+        if artifact.get("type") != "document":
+            continue
+        if "path" in artifact or "content" not in artifact:
+            continue  # already file-based or nothing to write
+        try:
+            folder = task_artifact_folder(task_id)
+            folder.mkdir(parents=True, exist_ok=True)
+            filename = f"document_{i + 1}.md"
+            file_path = folder / filename
+            file_path.write_text(artifact["content"])
+            rel_path = str(file_path.relative_to(Path(WORKSPACE)))
+            artifact["path"] = rel_path
+            artifact.setdefault("title", "Document")
+            del artifact["content"]
+            print(f"[dispatcher] Wrote document artifact: {rel_path}", flush=True)
+        except Exception as exc:
+            print(f"[dispatcher] Warning: could not materialize document artifact: {exc}", flush=True)
+
+
 def execute_task(task: dict) -> None:
     """Run CC in Docker to execute an approved task.
 
@@ -941,6 +967,8 @@ def execute_task(task: dict) -> None:
     auto_detect_artifacts(result, session_start, WORKSPACE)
     summary = result["summary"]
     write_result_md(task_id, summary)
+    # Materialize document artifacts: write content to files, store path
+    _materialize_document_artifacts(result, task_id)
     update_task(task_id, status="push_review", completed_at=now, result=result,
                 progress_action="awaiting push review",
                 progress_details=summary or "")

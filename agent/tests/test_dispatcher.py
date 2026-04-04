@@ -11,6 +11,7 @@ from dispatcher import (
     is_token_limit_error, parse_stream_json,
     task_artifact_folder, write_result_md,
     parse_result_artifacts, auto_detect_artifacts,
+    _materialize_document_artifacts,
 )
 from helpers import write_tasks
 
@@ -640,7 +641,7 @@ class TestAutoDetectArtifacts:
 
     def test_skips_when_artifacts_already_present(self, monkeypatch):
         """If result already has artifacts, auto_detect must not modify them."""
-        existing = [{"type": "git_commit", "hash": "abc", "subject": "existing"}]
+        existing = [{"type": "git_commit", "ref": "abc", "message": "existing"}]
         result = {"summary": "done", "artifacts": list(existing)}
 
         called = []
@@ -667,8 +668,8 @@ class TestAutoDetectArtifacts:
         assert len(result["artifacts"]) == 1
         artifact = result["artifacts"][0]
         assert artifact["type"] == "git_commit"
-        assert artifact["hash"] == "deadbeef"
-        assert artifact["subject"] == "Add feature X"
+        assert artifact["ref"] == "deadbeef"
+        assert artifact["message"] == "Add feature X"
 
     def test_adds_multiple_git_commits(self, monkeypatch):
         """Git log with two commits produces two git_commit artifacts in order."""
@@ -683,8 +684,8 @@ class TestAutoDetectArtifacts:
         auto_detect_artifacts(result, self._SESSION_START, "/fake/workspace")
 
         assert len(result["artifacts"]) == 2
-        assert result["artifacts"][0] == {"type": "git_commit", "hash": "aaa111", "subject": "First commit"}
-        assert result["artifacts"][1] == {"type": "git_commit", "hash": "bbb222", "subject": "Second commit"}
+        assert result["artifacts"][0] == {"type": "git_commit", "ref": "aaa111", "message": "First commit"}
+        assert result["artifacts"][1] == {"type": "git_commit", "ref": "bbb222", "message": "Second commit"}
 
     def test_git_error_is_silent(self, monkeypatch):
         """subprocess.run returning returncode=1 must not crash; git artifacts skipped."""
@@ -745,3 +746,158 @@ class TestAutoDetectArtifacts:
         assert "text" not in types
         assert "document" not in types
         assert types == ["git_commit"]
+
+
+class TestExecuteTaskRollupIntegration:
+    """Integration test: execute_task triggers rollup when last child completes.
+
+    Verifies the full wiring inside execute_task: when a child task completes
+    and is the last unresolved child, on_task_complete returns the parent_id and
+    generate_parent_report fires end-to-end, writing report.md and updating
+    parent.report in tasks.json.
+    """
+
+    def test_execute_task_triggers_rollup_when_last_child_completes(
+        self, tmp_path, monkeypatch
+    ):
+        # --- Setup tasks.json with parent (#1) and child (#2) ---
+        tf = tmp_path / "tasks.json"
+        parent_task = {
+            "id": 1,
+            "status": "decomposed",
+            "prompt": "parent task",
+            "children": [2],
+            "unresolved_children": 1,
+            "parent": None,
+            "priority": "medium",
+            "plan_model": "sonnet",
+            "exec_model": "sonnet",
+            "auto_approve": False,
+            "retry_count": 0,
+            "plan": None,
+            "report": None,
+            "result": None,
+        }
+        child_task = {
+            "id": 2,
+            "status": "in_progress",
+            "prompt": "child task",
+            "plan": '{"decision":"execute","plan":"do it"}',
+            "parent": 1,
+            "children": [],
+            "unresolved_children": 0,
+            "retry_count": 0,
+            "auto_approve": False,
+            "priority": "medium",
+            "plan_model": "sonnet",
+            "exec_model": "sonnet",
+        }
+        write_tasks(tf, {"tasks": [parent_task, child_task]})
+
+        # --- Patch TASKS_FILE, WORKSPACE, STATUS_FILE ---
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "WORKSPACE", str(tmp_path))
+        monkeypatch.setattr(dispatcher, "STATUS_FILE", tmp_path / "status.json")
+
+        # --- Mock subprocess.run to handle docker, git, and claude calls ---
+        def mock_subprocess_run(args, **kwargs):
+            m = MagicMock()
+            m.returncode = 0
+            cmd = args[0] if args else ""
+            if cmd == "docker":
+                # run_cc_docker returns stream-json with a structured result
+                m.stdout = (
+                    '{"type":"result","result":'
+                    '"{\\"summary\\":\\"child done\\",\\"artifacts\\":[]}"}'
+                )
+                m.stderr = ""
+            elif cmd == "claude":
+                # run_cc_local for generate_parent_report rollup
+                m.stdout = '{"type":"result","result":"Rollup report"}'
+                m.stderr = ""
+            else:
+                m.stdout = ""
+                m.stderr = ""
+            return m
+
+        monkeypatch.setattr(dispatcher.subprocess, "run", mock_subprocess_run)
+
+        # --- Execute the child task ---
+        dispatcher.execute_task(child_task)
+
+        # --- Assertions ---
+        data = json.loads(tf.read_text())
+        task_map = {t["id"]: t for t in data["tasks"]}
+
+        # 1. Child task #2 reached push_review after execution
+        assert task_map[2]["status"] == "push_review", (
+            f"Expected child #2 status 'push_review', got '{task_map[2]['status']}'"
+        )
+
+        # 2. Parent task #1 has report set (rollup fired)
+        assert task_map[1]["report"] is not None, (
+            "Parent #1 report should be set after rollup, but is None"
+        )
+
+        # 3. report.md was written to the parent's artifact folder
+        report_path = tmp_path / "agent_log" / "tasks" / "task_1" / "report.md"
+        assert report_path.exists(), (
+            f"report.md not found at expected path: {report_path}"
+        )
+
+
+class TestMaterializeDocumentArtifacts:
+    """_materialize_document_artifacts writes inline document content to files."""
+
+    def _setup(self, tmp_path, monkeypatch, tasks):
+        tf = tmp_path / "tasks.json"
+        write_tasks(tf, {"tasks": tasks})
+        monkeypatch.setattr(task_store, "TASKS_FILE", tf)
+        monkeypatch.setattr(dispatcher, "WORKSPACE", str(tmp_path))
+
+    def test_materialize_document_artifacts_writes_file_and_sets_path(
+        self, tmp_path, monkeypatch
+    ):
+        """Inline document artifact: content written to file, path set, content removed."""
+        self._setup(tmp_path, monkeypatch, [
+            {"id": 1, "status": "in_progress", "prompt": "doc task", "parent": None},
+        ])
+        result = {"summary": "done", "artifacts": [
+            {"type": "document", "content": "long content here"}
+        ]}
+        _materialize_document_artifacts(result, task_id=1)
+
+        artifact = result["artifacts"][0]
+        assert "content" not in artifact, "content should be removed after materialization"
+        assert "path" in artifact, "path should be set"
+        assert artifact["path"].endswith("document_1.md")
+        assert artifact.get("title") == "Document"
+
+        # File must exist and contain the original content
+        file_path = tmp_path / artifact["path"]
+        assert file_path.exists(), f"Document file not found: {file_path}"
+        assert file_path.read_text() == "long content here"
+
+    def test_materialize_skips_already_path_based(self, tmp_path, monkeypatch):
+        """Artifact that already has 'path' set must not be modified."""
+        self._setup(tmp_path, monkeypatch, [
+            {"id": 1, "status": "in_progress", "prompt": "doc task", "parent": None},
+        ])
+        original = {"type": "document", "path": "some/existing/path.md", "title": "Existing"}
+        result = {"summary": "done", "artifacts": [dict(original)]}
+        _materialize_document_artifacts(result, task_id=1)
+        assert result["artifacts"][0] == original
+
+    def test_materialize_skips_non_document_types(self, tmp_path, monkeypatch):
+        """text and git_commit artifacts must not be touched."""
+        self._setup(tmp_path, monkeypatch, [
+            {"id": 1, "status": "in_progress", "prompt": "task", "parent": None},
+        ])
+        artifacts = [
+            {"type": "text", "content": "short text"},
+            {"type": "git_commit", "ref": "abc123", "message": "fix"},
+        ]
+        result = {"summary": "done", "artifacts": [dict(a) for a in artifacts]}
+        _materialize_document_artifacts(result, task_id=1)
+        assert result["artifacts"][0] == artifacts[0]
+        assert result["artifacts"][1] == artifacts[1]

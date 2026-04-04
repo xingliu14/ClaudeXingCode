@@ -1,3 +1,7 @@
 # Task #1 Result
 
-done
+**Prompt:** Write me a haiku
+
+## Summary
+
+Wrote a haiku as requested.

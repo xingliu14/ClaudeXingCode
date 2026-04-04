@@ -16,7 +16,7 @@ with the dispatcher; all mutations go through `locked_update()`.
 
 ## AJAX polling
 
-The board page polls `/tasks` (JSON) every 5 s and diffs the DOM in-place.
+The board page polls `/tasks` (JSON) every 3s and diffs the DOM in-place.
 The `push_review` and `plan_review` columns have an amber highlight; the nav badge
 shows the count of tasks needing human attention.
 

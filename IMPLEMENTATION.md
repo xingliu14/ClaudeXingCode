@@ -7,13 +7,13 @@
 | 1  | Environment Setup | Done |
 | 2  | Core Instruction Files | Done (agent/CLAUDE.md needs human review) |
 | 3  | Task Queue | Done |
-| 4  | Dispatcher Core Loop | Partial |
-| 5  | Web UI | Partial |
-| 6  | Daily Email Digest | Code done, untested |
+| 4  | Dispatcher Core Loop | Done |
+| 5  | Web UI | Done |
+| 6  | Daily Email Digest | Code done; crontab deferred |
 | 7  | GitHub / Push Review | Done |
 | 8  | Rate-Limit + Session Tracking | Done |
 | 9  | Structured Plan + Decomposition | Done |
-| 10 | Dependency Graph Enforcement | Partial |
+| 10 | Dependency Graph Enforcement | Done |
 | 11 | Doom Loop Detection | Done |
 | 12 | Typed Result + Artifact Storage | Done |
 
@@ -48,16 +48,16 @@ Docker Desktop (v29.2.1), `agent/docker/Dockerfile` (Ubuntu 22.04, Node.js 20, C
 
 ---
 
-### Phase 4: Dispatcher Core Loop — Partial
+### Phase 4: Dispatcher Core Loop — Done
 
-Core loop in `agent/dispatcher/dispatcher.py` is fully operational (tasks #1–#3 completed). Two items remain as cross-phase dependencies:
+Core loop in `agent/dispatcher/dispatcher.py` is fully operational. Cross-phase dependencies resolved:
 
 - [x] Parent report rollup when `unresolved_children == 0` (→ Phase 10)
-- [ ] Write typed `result` object with artifacts, replaces flat `summary` truncation (→ Phase 12)
+- [x] Write typed `result` object with artifacts, replaces flat `summary` truncation (→ Phase 12)
 
 ---
 
-### Phase 5: Web UI — Partial
+### Phase 5: Web UI — Done
 
 `agent/web/web_manager.py` — Flask app, Kanban board, AJAX polling, all CRUD + lifecycle routes implemented.
 
@@ -75,8 +75,8 @@ Core loop in `agent/dispatcher/dispatcher.py` is fully operational (tasks #1–#
 ### Phase 6: Daily Email Digest — Code done, untested
 
 Code complete (`agent/daily_digest.py`). Remaining:
-- [ ] Crontab entry configured on the Mac (`0 21 * * * python3 .../daily_digest.py`)
-- [ ] Email delivery verified end-to-end
+- [ ] Crontab entry — deferred; run manually or add later via `crontab -e` or APScheduler in the web process
+- [ ] Email delivery verified end-to-end (SMTP credentials set in `agent/.env`)
 - [x] Digest includes rate-limit event count and avg session duration — stats footer added to `build_body`; filtered to today's sessions by `started_at` date prefix; 3 new tests
 
 ---
@@ -104,14 +104,14 @@ Plan phase outputs JSON `{"decision": "execute"|"decompose", ...}`; `parse_plan_
 
 ---
 
-### Phase 10: Dependency Graph Enforcement — Partial
+### Phase 10: Dependency Graph Enforcement — Done
 
 `pick_next_task` skips blocked tasks; `on_task_complete` clears dependents' `blocked_on` and decrements parent's `unresolved_children` atomically. Remaining:
 
 - [x] When `unresolved_children == 0` — collect children's `result.summary`, run CC locally to generate `parent.report`, write to `agent_log/tasks/task_P/report.md`
 - [x] Leaf task (no children): set `task.report = task.result.summary` directly on completion
 - [x] Report rollup propagates up the tree recursively
-- [ ] **UI:** decomposed task detail page shows consolidated `parent.report` (collapsible, markdown rendered)
+- [x] **UI:** decomposed task detail page shows consolidated `parent.report` (collapsible, markdown rendered)
 
 ---
 
@@ -203,7 +203,7 @@ ClaudeXingCode/
 
 ## Remaining Work (Build Order)
 
-1. [ ] Human-attention UI + task detail redesign (Phase 5)
+1. [x] Human-attention UI + task detail redesign (Phase 5)
 2. [x] Typed result + artifact folders + Web UI rendering (Phase 12)
 3. [x] Parent report rollup when `unresolved_children == 0` (Phase 10)
 4. [ ] Daily email digest — configure crontab, verify delivery end-to-end (Phase 6)
@@ -238,7 +238,7 @@ ClaudeXingCode/
 - [ ] `task.sessions` array populated; Sessions table visible in Web UI
 
 **Typed results + artifacts (Phase 12):**
-- [ ] `result` object stored; artifact folder created; artifacts rendered in Web UI
+- [x] `result` object stored; artifact folder created; artifacts rendered in Web UI (schema matches DESIGN.md)
 
 **Email digest (Phase 6):**
 - [ ] Email arrives with correct summary and session stats
