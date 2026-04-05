@@ -1,5 +1,3 @@
-# Task #4 Result
-
 munity presence** in Chinese, Indian, Korean professional organizations (Committee of 100, TiE, Korean American Chamber) plus educational content in relevant languages builds trust in communities that rely heavily on peer validation.
 
 **Fee structure:** Flat retainer ($15,000–$50,000+/year) + AUM fee (0.75–1.25%) is ideal for your niche. HNW immigrant clients are less price-sensitive when they trust you.

@@ -962,6 +962,18 @@ def execute_task(task: dict) -> None:
         time.sleep(TOKEN_BACKOFF_SECONDS)
         return
 
+    if exec_rc != 0:
+        if "Cannot connect to the Docker daemon" in exec_output or "docker daemon" in exec_output.lower():
+            stop_reason = "docker_unavailable"
+        else:
+            stop_reason = "execution_failed"
+        error_snippet = exec_output.strip()[-300:] if exec_output.strip() else "no output"
+        update_task(task_id, status="stopped", stop_reason=stop_reason,
+                    summary=f"Execution failed (exit {exec_rc}): {error_snippet}",
+                    progress_action="stopped", progress_details=stop_reason)
+        print(f"[dispatcher] Task #{task_id} stopped: {stop_reason} (exit {exec_rc}).", flush=True)
+        return
+
     now = datetime.now(timezone.utc).isoformat()
     result = parse_result_artifacts(exec_output)
     auto_detect_artifacts(result, session_start, WORKSPACE)

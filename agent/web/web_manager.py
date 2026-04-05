@@ -23,6 +23,7 @@ import os
 import sys
 import subprocess
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 _AGENT_DIR = Path(__file__).resolve().parent.parent
@@ -37,6 +38,21 @@ WORKSPACE = Path(os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE))
 PROGRESS_FILE = WORKSPACE / "agent_log" / "agent_log.md"
 
 app = Flask(__name__)
+
+_PT = ZoneInfo("America/Los_Angeles")
+
+@app.template_filter("pt")
+def to_pt(ts):
+    """Convert an ISO timestamp string to Pacific time, formatted as YYYY-MM-DD HH:MM:SS PT."""
+    if not ts:
+        return "?"
+    try:
+        dt = datetime.fromisoformat(str(ts))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(_PT).strftime("%Y-%m-%d %H:%M:%S PT")
+    except Exception:
+        return str(ts)[:19]
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +131,7 @@ BOARD_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>">
   <title>ClaudeXingCode Dashboard</title>
   <style>
     """ + SHARED_CSS + """
@@ -475,6 +492,7 @@ DETAIL_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>">
   <title>Task #{{ task.id }}</title>
   <style>
     """ + SHARED_CSS + """
@@ -508,7 +526,7 @@ DETAIL_HTML = """
     .edit-form { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
                  padding: 1rem; margin: 1rem 0; display: none; }
     .edit-form textarea { width: 100%; padding: 0.5rem; border: 1px solid #ccc;
-                          border-radius: 6px; font-size: 0.9rem; }
+                          border-radius: 6px; font-size: 0.9rem; resize: none; overflow: hidden; box-sizing: border-box; }
     .edit-form select { padding: 0.4rem; border-radius: 6px; border: 1px solid #ccc; }
     .timestamp { color: #888; font-size: 0.75rem; }
     .rate-limit-banner { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px;
@@ -566,6 +584,39 @@ DETAIL_HTML = """
 
   {# ======= LEFT: plan + approve/reject ======= #}
   <div class="detail-left">
+
+    {# ---- Edit form (hidden by default, shown by "Edit Task" button) ---- #}
+    <div class="edit-form" id="edit-form">
+      <form method="post" action="/tasks/{{ task.id }}/edit">
+        <p><strong>Edit Task</strong></p>
+        <textarea name="prompt" rows="3"
+          oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'">{{ task.prompt }}</textarea>
+        <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+          <label>Priority:</label>
+          <select name="priority">
+            <option value="high" {% if task.get('priority')=='high' %}selected{% endif %}>High</option>
+            <option value="medium" {% if task.get('priority','medium')=='medium' %}selected{% endif %}>Medium</option>
+            <option value="low" {% if task.get('priority')=='low' %}selected{% endif %}>Low</option>
+          </select>
+          <label>Plan:</label>
+          <select name="plan_model">
+            {% set pm = task.get('plan_model', task.get('model','sonnet')) %}
+            <option value="sonnet" {% if pm=='sonnet' %}selected{% endif %}>Sonnet</option>
+            <option value="opus" {% if pm=='opus' %}selected{% endif %}>Opus</option>
+            <option value="haiku" {% if pm=='haiku' %}selected{% endif %}>Haiku</option>
+          </select>
+          <label>Exec:</label>
+          <select name="exec_model">
+            {% set em = task.get('exec_model', task.get('model','sonnet')) %}
+            <option value="sonnet" {% if em=='sonnet' %}selected{% endif %}>Sonnet</option>
+            <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
+            <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
+          </select>
+          <button class="btn btn-edit" type="submit">Save</button>
+          <button class="btn" type="button" onclick="document.getElementById('edit-form').style.display='none'" style="background:#e5e7eb;color:#333">Cancel</button>
+        </div>
+      </form>
+    </div>
 
     {# ---- Action buttons based on current status ---- #}
     <div class="actions">
@@ -688,38 +739,6 @@ DETAIL_HTML = """
     {% endfor %}
     {% endif %}
 
-    {# ---- Edit form (hidden by default) ---- #}
-    <div class="edit-form" id="edit-form">
-      <form method="post" action="/tasks/{{ task.id }}/edit">
-        <p><strong>Edit Task</strong></p>
-        <textarea name="prompt" rows="3">{{ task.prompt }}</textarea>
-        <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
-          <label>Priority:</label>
-          <select name="priority">
-            <option value="high" {% if task.get('priority')=='high' %}selected{% endif %}>High</option>
-            <option value="medium" {% if task.get('priority','medium')=='medium' %}selected{% endif %}>Medium</option>
-            <option value="low" {% if task.get('priority')=='low' %}selected{% endif %}>Low</option>
-          </select>
-          <label>Plan:</label>
-          <select name="plan_model">
-            {% set pm = task.get('plan_model', task.get('model','sonnet')) %}
-            <option value="sonnet" {% if pm=='sonnet' %}selected{% endif %}>Sonnet</option>
-            <option value="opus" {% if pm=='opus' %}selected{% endif %}>Opus</option>
-            <option value="haiku" {% if pm=='haiku' %}selected{% endif %}>Haiku</option>
-          </select>
-          <label>Exec:</label>
-          <select name="exec_model">
-            {% set em = task.get('exec_model', task.get('model','sonnet')) %}
-            <option value="sonnet" {% if em=='sonnet' %}selected{% endif %}>Sonnet</option>
-            <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
-            <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
-          </select>
-          <button class="btn btn-edit" type="submit">Save</button>
-          <button class="btn" type="button" onclick="document.getElementById('edit-form').style.display='none'" style="background:#e5e7eb;color:#333">Cancel</button>
-        </div>
-      </form>
-    </div>
-
   </div>{# end .detail-left #}
 
   {# ======= RIGHT: metadata + subtasks + sessions ======= #}
@@ -776,7 +795,7 @@ DETAIL_HTML = """
       <div class="meta-row" style="margin-top:0.75rem;display:flex;gap:0.4rem;flex-wrap:wrap">
         {# Edit: available for any status except in_progress #}
         {% if task.status != 'in_progress' %}
-        <button class="btn btn-edit btn-sm" onclick="document.getElementById('edit-form').style.display='block'">Edit</button>
+        <button class="btn btn-edit btn-sm" onclick="var f=document.getElementById('edit-form');f.style.display='block';var ta=f.querySelector('textarea');ta.style.height='auto';ta.style.height=ta.scrollHeight+'px';f.scrollIntoView({behavior:'smooth',block:'start'})">Edit Task</button>
         {% endif %}
         {# Delete: available unless in_progress #}
         {% if task.status != 'in_progress' %}
@@ -840,7 +859,7 @@ DETAIL_HTML = """
           {% for s in task.sessions %}
           <tr>
             <td>{{ loop.index }}</td>
-            <td>{{ s.get('started_at', '?')[:19] }}</td>
+            <td>{{ s.get('started_at') | pt }}</td>
             <td>
               {% set dur = s.get('duration_s', 0) %}
               {% if dur >= 3600 %}{{ (dur // 3600) }}h {{ ((dur % 3600) // 60) }}m
@@ -910,6 +929,7 @@ PROGRESS_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>">
   <title>Progress Log</title>
   <style>
     """ + SHARED_CSS + """
@@ -939,6 +959,7 @@ LOG_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>">
   <title>Git Log</title>
   <style>
     """ + SHARED_CSS + """
