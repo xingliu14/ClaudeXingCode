@@ -226,14 +226,18 @@ def build_plan_prompt(prompt: str, rejection_comments: list | None = None) -> st
     return "\n\n".join(parts)
 
 
-def build_task_prompt(prompt: str, plan_text: str | None = None) -> str:
+def build_task_prompt(prompt: str, plan_text: str | None = None, task_id: int | None = None) -> str:
     """Wrap the user prompt with isolation instructions. Injects approved plan if provided."""
+    if task_id is not None:
+        artifact_dir = f"agent_log/tasks/task_{task_id}"
+    else:
+        artifact_dir = "agent_log"
     parts = [
         "You are working on a SINGLE, INDEPENDENT task. "
         "Do NOT reference, read, or build upon any previous tasks, task history, "
         "PROGRESS.md entries, or prior task outputs. Treat this as a completely fresh request.\n\n"
-        "If you create any output files (stories, text, code, etc.), save them in the "
-        "`agent_log/` directory, NOT in the project root."
+        f"If you create any output files (stories, research docs, text, etc.), save them in "
+        f"`{artifact_dir}/`, NOT in the project root or `agent_log/` directly."
     ]
     if plan_text:
         parts.append(f"APPROVED PLAN:\n{plan_text}")
@@ -921,7 +925,7 @@ def execute_task(task: dict) -> None:
                     plan_text = plan_decision.get("plan")
         except (json.JSONDecodeError, TypeError):
             pass
-        exec_prompt = build_task_prompt(task["prompt"], plan_text=plan_text)
+        exec_prompt = build_task_prompt(task["prompt"], plan_text=plan_text, task_id=task_id)
         exec_rc, exec_output = run_cc_docker(exec_prompt, model=exec_model)
     except subprocess.TimeoutExpired:
         update_task(task_id, status="stopped", stop_reason="timeout",
