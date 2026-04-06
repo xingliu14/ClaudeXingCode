@@ -41,9 +41,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 RUN npm install -g @anthropic-ai/claude-code
 
 # Non-root user — Claude Code refuses --dangerously-skip-permissions as root.
-# HOST_UID=501 matches the default macOS first-user UID so that files created
-# inside the container have correct ownership on the mounted workspace.
-ARG HOST_UID=501
+# HOST_UID defaults to 1000 (standard Linux first-user UID).
+# Override at build time to match the host user: --build-arg HOST_UID=$(id -u)
+# macOS first-user is typically 501; Linux first-user is typically 1000.
+ARG HOST_UID=1000
 RUN useradd -m -s /bin/bash -u ${HOST_UID} agent \
     && mkdir -p /home/agent/.claude \
     && chown agent:agent /home/agent/.claude

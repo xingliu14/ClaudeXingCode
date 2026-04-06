@@ -8,7 +8,7 @@
 #   └── restart_dispatcher subshell     ($WATCH_PID — polls for .py changes)
 #       └── python3 dispatcher.py       (restarted on .py change or crash)
 #
-# macOS-specific: uses `stat -f` and `md5 -q` for the file-change checksum.
+# File-change checksum is cross-platform (macOS + Linux); see py_checksum().
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -51,9 +51,13 @@ WEB_PID=$!
 # If any file is added, removed, or modified, the checksum changes.
 # -maxdepth 2 covers agent/core/*.py, agent/web/*.py, agent/dispatcher/*.py
 # but NOT agent/tests/*.py — test changes shouldn't restart the dispatcher.
-# NOTE: stat -f and md5 -q are macOS-specific (see header comment).
+# Cross-platform: macOS uses stat -f / md5 -q; Linux uses stat --format / md5sum.
 py_checksum() {
-    find "$SCRIPT_DIR" -maxdepth 2 -name "*.py" | sort | xargs stat -f "%m %N" 2>/dev/null | md5 -q
+    if [ "$(uname -s)" = "Darwin" ]; then
+        find "$SCRIPT_DIR" -maxdepth 2 -name "*.py" | sort | xargs stat -f "%m %N" 2>/dev/null | md5 -q
+    else
+        find "$SCRIPT_DIR" -maxdepth 2 -name "*.py" | sort | xargs stat --format="%Y %n" 2>/dev/null | md5sum | cut -d' ' -f1
+    fi
 }
 
 restart_dispatcher() {

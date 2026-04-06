@@ -1,0 +1,18 @@
+[Unit]
+Description=Ralph Loop — Web Manager (Flask UI)
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/ClaudeXingCode
+EnvironmentFile=/home/%i/ClaudeXingCode/agent/.env
+ExecStart=/usr/bin/python3 /home/%i/ClaudeXingCode/agent/web/web_manager.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ralph-web
+
+[Install]
+WantedBy=multi-user.target

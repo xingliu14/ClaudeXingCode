@@ -16,6 +16,7 @@
 | 10 | Dependency Graph Enforcement | Done |
 | 11 | Doom Loop Detection | Done |
 | 12 | Typed Result + Artifact Storage | Done |
+| 13 | VPS Deployment | In progress — awaiting human VPS setup |
 
 ---
 
@@ -147,6 +148,12 @@ ClaudeXingCode/
 +-- IDEAS.md                <- ideas, inspiration, future scope
 +-- tasks.json              <- task queue (managed by dispatcher + web UI)
 +-- web.sh                  <- simple launcher (env setup, starts both processes)
++-- sync-vps.sh             <- rsync deploy script (local → VPS + service restart)
++-- deploy/
+    +-- ralph-web@.service      <- systemd template unit for Flask web manager
+    +-- ralph-dispatcher@.service <- systemd template unit for dispatcher
+    +-- ralph.nginx.conf        <- nginx reverse-proxy template (HTTPS + basic auth)
+    +-- .env.vps.example        <- VPS connection config template (gitignored when filled)
 +-- .claudeignore           <- exclude .env, secrets, build artifacts
 +-- .gitignore
 +-- agent_log/              <- ALL agent-generated output
@@ -209,7 +216,8 @@ ClaudeXingCode/
 4. [ ] Daily email digest — configure crontab, verify delivery end-to-end (Phase 6)
 5. [x] Push review dispatcher flow (`push_review` after commit, approve/reject routing) + `agent/docker/CLAUDE.md` push rules (Phase 7)
 6. [x] Populate stub CLAUDE.md files (Phase 2) — `agent/CLAUDE.md` stale content still needs human review
-7. [ ] *(Later)* Tailscale + iPhone access
+7. [ ] VPS provisioning + first deployment (Phase 13b–d) — human action
+8. [ ] *(Later)* Tailscale + iPhone access
 
 ---
 
@@ -245,6 +253,87 @@ ClaudeXingCode/
 
 **GitHub push review (Phase 7):**
 - [ ] `gh auth status` succeeds in container; push_review flow works end-to-end
+
+---
+
+---
+
+### Phase 13: VPS Deployment — In progress
+
+Goal: migrate from local Mac to a headless Ubuntu 22.04 VPS reachable via HTTPS.
+
+#### 13a — Code changes for Linux (done)
+
+- [x] `agent/start.sh` — cross-platform `py_checksum()`: macOS uses `stat -f`/`md5 -q`, Linux uses `stat --format`/`md5sum`
+- [x] `agent/docker/Dockerfile` — `HOST_UID` default changed from `501` (macOS) to `1000` (Linux); pass `--build-arg HOST_UID=$(id -u)` to match the service user
+- [x] `sync-vps.sh` — rsync deploy script; excludes credentials and runtime state; `--dry-run` and `--rebuild` flags
+- [x] `deploy/ralph-web@.service` — systemd template unit for Flask web manager (`%i` = username)
+- [x] `deploy/ralph-dispatcher@.service` — systemd template unit for dispatcher
+- [x] `deploy/ralph.nginx.conf` — nginx reverse-proxy template (HTTPS + HTTP Basic Auth)
+- [x] `deploy/.env.vps.example` — VPS connection config template (`VPS_HOST`, `VPS_USER`, `VPS_DIR`)
+
+#### 13b — VPS provisioning (human action required)
+
+- [ ] **Human**: Provision Ubuntu 22.04 LTS VPS (≥ 1 GB RAM, ≥ 20 GB disk)
+- [ ] **Human**: Add local SSH public key; verify `ssh user@host` works without password
+- [ ] **Human**: Install system dependencies on VPS:
+  ```bash
+  sudo apt update && sudo apt install -y \
+      python3 python3-pip git curl \
+      docker.io nginx certbot python3-certbot-nginx apache2-utils
+  sudo usermod -aG docker $USER   # docker without sudo; re-login after
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+  sudo apt install -y nodejs
+  sudo npm install -g @anthropic-ai/claude-code
+  ```
+- [ ] **Human**: Authenticate Claude Code on VPS (one-time OAuth flow): `claude`
+- [ ] **Human**: Clone repo on VPS: `git clone <repo> ~/ClaudeXingCode`
+- [ ] **Human**: Install Python deps on VPS: `pip install flask markdown`
+- [ ] **Human**: Create `~/ClaudeXingCode/agent/.env` on VPS (copy from `.env.example`, fill in credentials)
+- [ ] **Human**: Set git identity on VPS: `git config --global user.name/email`
+- [ ] **Human**: Create `deploy/.env.vps` locally (copy from `deploy/.env.vps.example`, set `VPS_HOST`/`VPS_USER`)
+
+#### 13c — First deployment (human action required)
+
+- [ ] **Human**: Initial sync + Docker image build (run from local Mac):
+  ```bash
+  ./sync-vps.sh --rebuild
+  ```
+- [ ] **Human**: Install and enable systemd services on VPS:
+  ```bash
+  sudo cp ~/ClaudeXingCode/deploy/ralph-web@.service \
+           ~/ClaudeXingCode/deploy/ralph-dispatcher@.service \
+           /etc/systemd/system/
+  sudo systemctl daemon-reload
+  sudo systemctl enable ralph-web@$USER ralph-dispatcher@$USER
+  sudo systemctl start  ralph-web@$USER ralph-dispatcher@$USER
+  sudo systemctl status ralph-web@$USER ralph-dispatcher@$USER
+  ```
+- [ ] **Human**: Set up nginx + SSL on VPS:
+  ```bash
+  sudo cp ~/ClaudeXingCode/deploy/ralph.nginx.conf /etc/nginx/sites-available/ralph
+  # Edit the file: replace YOUR_DOMAIN with your domain or IP
+  sudo ln -s /etc/nginx/sites-available/ralph /etc/nginx/sites-enabled/
+  sudo nginx -t
+  sudo certbot --nginx -d YOUR_DOMAIN   # provisions cert and updates config
+  sudo htpasswd -c /etc/nginx/.ralph-htpasswd YOUR_USERNAME
+  sudo systemctl reload nginx
+  ```
+
+#### 13d — Verification
+
+- [ ] Web UI reachable at `https://your-domain` (prompts for basic-auth password)
+- [ ] Add a test task; verify plan → approve → execute end-to-end
+- [ ] `sudo systemctl status ralph-web@$USER ralph-dispatcher@$USER` — both `active (running)`
+- [ ] Docker sandbox executes tasks: `docker ps` shows running container during execution
+
+#### Ongoing: code deployments after VPS is live
+
+```bash
+./sync-vps.sh            # push code changes + restart services
+./sync-vps.sh --rebuild  # also rebuild Docker image (after Dockerfile changes)
+./sync-vps.sh --dry-run  # preview changes without deploying
+```
 
 ---
 

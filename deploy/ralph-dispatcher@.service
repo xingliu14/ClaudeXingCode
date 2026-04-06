@@ -1,0 +1,19 @@
+[Unit]
+Description=Ralph Loop — Dispatcher
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/ClaudeXingCode
+EnvironmentFile=/home/%i/ClaudeXingCode/agent/.env
+ExecStart=/usr/bin/python3 /home/%i/ClaudeXingCode/agent/dispatcher/dispatcher.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ralph-dispatcher
+
+[Install]
+WantedBy=multi-user.target

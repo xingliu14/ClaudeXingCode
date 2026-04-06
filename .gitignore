@@ -1,4 +1,5 @@
 agent/.env
+deploy/.env.vps
 *.log
 __pycache__/
 *.pyc
