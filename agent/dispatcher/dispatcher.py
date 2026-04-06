@@ -431,10 +431,10 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
 # Post-task helpers
 # ---------------------------------------------------------------------------
 
-def git_commit(message: str) -> None:
+def git_commit(message: str) -> bool:
     """Run git add + commit inside Docker so file ownership stays consistent.
 
-    Best-effort: silently succeeds if there are no changes to commit.
+    Returns True if a commit was made, False if there was nothing to commit.
     Falls back to local git if Docker fails (e.g., image not available)."""
     # Standard POSIX single-quote escaping: replace ' with '\'' (end quote,
     # escaped literal quote, start new quote). Safe against command injection
@@ -450,10 +450,15 @@ def git_commit(message: str) -> None:
     ]
     result = subprocess.run(docker_cmd, capture_output=True, text=True)
     if result.returncode != 0:
+        nothing_to_commit = "nothing to commit" in result.stdout + result.stderr
+        if nothing_to_commit:
+            return False
         # Fallback to local git if Docker fails (e.g., image not available)
         print(f"[dispatcher] Docker git commit failed, falling back to local: {result.stderr[:200]}", flush=True)
-        subprocess.run(["git", "add", "-A"], cwd=WORKSPACE, capture_output=True)
-        subprocess.run(["git", "commit", "-m", message], cwd=WORKSPACE, capture_output=True)
+        add = subprocess.run(["git", "add", "-A"], cwd=WORKSPACE, capture_output=True)
+        commit = subprocess.run(["git", "commit", "-m", message], cwd=WORKSPACE, capture_output=True)
+        return commit.returncode == 0
+    return True
 
 
 def git_push() -> bool:
@@ -985,13 +990,19 @@ def execute_task(task: dict) -> None:
     write_result_md(task_id, summary)
     # Materialize document artifacts: write content to files, store path
     _materialize_document_artifacts(result, task_id)
-    update_task(task_id, status="push_review", completed_at=now, result=result,
-                progress_action="awaiting push review",
+    committed = git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
+    if committed:
+        final_status = "push_review"
+        progress_action = "awaiting push review"
+    else:
+        final_status = "done"
+        progress_action = "completed"
+    update_task(task_id, status=final_status, completed_at=now, result=result,
+                progress_action=progress_action,
                 progress_details=summary or "")
     parent_id = on_task_complete(task_id)
     if parent_id is not None:
         generate_parent_report(parent_id)
-    git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
     print(f"[dispatcher] Task #{task_id} complete — awaiting push review.", flush=True)
 
 

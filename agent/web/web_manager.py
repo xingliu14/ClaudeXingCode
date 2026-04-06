@@ -30,6 +30,8 @@ _AGENT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_AGENT_DIR / "core"))
 
 from flask import Flask, redirect, render_template_string, request, url_for, jsonify
+from markupsafe import Markup
+import markdown as _markdown
 from progress_logger import log_progress
 from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE, STATUS_FILE
 
@@ -40,6 +42,13 @@ PROGRESS_FILE = WORKSPACE / "agent_log" / "agent_log.md"
 app = Flask(__name__)
 
 _PT = ZoneInfo("America/Los_Angeles")
+
+@app.template_filter("md")
+def render_md(text):
+    """Convert markdown text to safe HTML for rendering in templates."""
+    if not text:
+        return ""
+    return Markup(_markdown.markdown(str(text), extensions=["tables", "fenced_code"]))
 
 @app.template_filter("pt")
 def to_pt(ts):
@@ -564,7 +573,15 @@ DETAIL_HTML = """
     .report-card { margin: 1rem 0; border: 1px solid #d1fae5; border-radius: 6px; background: #f0fdf4; }
     .report-card summary { padding: 0.6rem 0.8rem; cursor: pointer; font-weight: 600; color: #065f46; }
     .report-card summary:hover { background: #dcfce7; border-radius: 6px; }
-    .report-content { margin: 0; padding: 0.8rem; white-space: pre-wrap; font-size: 0.85rem; border-top: 1px solid #d1fae5; }
+    .report-content { margin: 0; padding: 0.8rem; font-size: 0.85rem; border-top: 1px solid #d1fae5; line-height: 1.6; }
+    .report-content h1,.report-content h2,.report-content h3 { margin: 0.8rem 0 0.3rem; }
+    .report-content table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
+    .report-content th, .report-content td { border: 1px solid #d1d5db; padding: 0.3rem 0.5rem; }
+    .report-content th { background: #f3f4f6; }
+    .report-content code { background: #f3f4f6; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.8rem; }
+    .report-content pre { background: #f3f4f6; padding: 0.5rem; border-radius: 4px; overflow-x: auto; }
+    .report-content ul, .report-content ol { padding-left: 1.5rem; }
+    .report-content a { color: #2563eb; }
   </style>
 </head>
 <body>
@@ -707,15 +724,16 @@ DETAIL_HTML = """
     <h2>Report</h2>
     <details class="report-card" open>
       <summary>Consolidated report from all subtasks</summary>
-      <pre class="report-content">{{ task.report }}</pre>
+      <div class="report-content">{{ task.report | md }}</div>
     </details>
     {% endif %}
 
     {# ---- Result Summary ---- #}
+    {# Only show if report is absent or different — avoids duplicate when report == summary (leaf tasks) #}
     {% set result_summary = (task.get('result') or {}).get('summary') or task.get('summary') %}
-    {% if result_summary %}
+    {% if result_summary and result_summary != task.get('report') %}
     <h2>Result Summary</h2>
-    <pre>{{ result_summary }}</pre>
+    <div class="report-content" style="border:none;padding:0">{{ result_summary | md }}</div>
     {% endif %}
 
     {# ---- Artifacts ---- #}
@@ -847,16 +865,18 @@ DETAIL_HTML = """
     </div>{# end subtasks card #}
     {% endif %}
 
-    {# ---- Sessions card (Phase 8) ---- #}
+    {# ---- Sessions card ---- #}
     {% if task.get('sessions') %}
     <div class="meta-card">
-      <h3>Sessions</h3>
+      <h3>Run History</h3>
       <table class="sessions">
         <thead>
-          <tr><th>#</th><th>Started</th><th>Duration</th><th>Exit</th><th>RL?</th></tr>
+          <tr><th>Run</th><th>Started</th><th>Duration</th><th>Outcome</th></tr>
         </thead>
         <tbody>
           {% for s in task.sessions %}
+          {% set rc = s.get('exit_code', '?') %}
+          {% set rl = s.get('rate_limited') %}
           <tr>
             <td>{{ loop.index }}</td>
             <td>{{ s.get('started_at') | pt }}</td>
@@ -866,8 +886,15 @@ DETAIL_HTML = """
               {% elif dur >= 60 %}{{ (dur // 60) }}m {{ (dur % 60) }}s
               {% else %}{{ dur }}s{% endif %}
             </td>
-            <td>{{ s.get('exit_code', '?') }}</td>
-            <td>{% if s.get('rate_limited') %}Yes &#9888;{% else %}No{% endif %}</td>
+            <td>
+              {% if rl %}
+                ⚠ Rate limited — will retry
+              {% elif rc == 0 %}
+                ✓ Completed
+              {% else %}
+                ✗ Failed (exit {{ rc }})
+              {% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>
