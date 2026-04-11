@@ -58,3 +58,19 @@ you find problem you can prompt me to review the design and CLAUDE.md.
 Check IMPLEMENTATION.md, find the next small task to work on. Implement the feature and test it
 to make sure it's working properly. Then update IMPLEMENTATION.md and report what you did to
 the human.
+
+## Common Commands
+
+**Pull personal task results from VPS to local** (`vps-backup/`):
+```bash
+python3 sync-from-vps.py
+```
+Only syncs `account="personal"` tasks. Test account stays on VPS. Run manually whenever you want a local backup.
+
+**Push local code changes to VPS + restart services:**
+```bash
+./sync-vps.sh             # push code + restart
+./sync-vps.sh --rebuild   # also rebuild Docker image (after Dockerfile changes)
+./sync-vps.sh --dry-run   # preview without deploying
+```
+Requires `deploy/.env.vps` with `VPS_HOST` and `VPS_USER` set.
