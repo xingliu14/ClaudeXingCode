@@ -36,7 +36,7 @@ from markupsafe import Markup
 import markdown as _markdown
 from werkzeug.security import check_password_hash
 from progress_logger import log_progress
-from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE, STATUS_FILE
+from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE, STATUS_FILE, DEFAULT_ACCOUNT
 
 _ACCOUNTS_FILE = _AGENT_DIR / "accounts.json"
 
@@ -83,12 +83,12 @@ def _require_auth():
 
 def _check_owner(task_id: int):
     """Return (task, error) — error is a (message, code) tuple or None."""
-    acc = session.get("account", "personal")
+    acc = session.get("account", DEFAULT_ACCOUNT)
     data = load_tasks()
     task = next((t for t in data["tasks"] if t["id"] == task_id), None)
     if task is None:
         return None, ("Task not found", 404)
-    if task.get("account", "personal") != acc:
+    if task.get("account", DEFAULT_ACCOUNT) != acc:
         return None, ("Forbidden", 403)
     return task, None
 
@@ -189,6 +189,7 @@ fetch('/status').then(r=>r.json()).then(d=>{
 # ---------------------------------------------------------------------------
 
 BOARD_HTML = """
+{% macro priority_select(t) %}<form method="post" action="/tasks/{{ t.id }}/set-priority" style="margin:0;display:inline"><select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-{{ t.get('priority','medium') }}" style="padding:0.1rem 0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.65rem;font-weight:600;cursor:pointer"><option value="high" {% if t.get('priority')=='high' %}selected{% endif %}>high</option><option value="medium" {% if t.get('priority','medium')=='medium' %}selected{% endif %}>medium</option><option value="low" {% if t.get('priority')=='low' %}selected{% endif %}>low</option></select></form>{% endmacro %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -247,7 +248,7 @@ BOARD_HTML = """
     .btn-hide:hover { background: #f0f0f0; }
     .card.hidden-card { opacity: 0.5; }
     .col-done h2 { cursor: pointer; user-select: none; }
-    .col-done h2::after { content: ' ▾'; font-size: 0.65rem; color: #aaa; }
+    .col-done h2::after { content: ' ▾'; font-size: 1.1rem; color: #aaa; }
     .col-done.col-collapsed h2::after { content: ' ▸'; }
     .col-done.col-collapsed > :not(h2) { display: none; }
     /* Human-attention: review columns */
@@ -271,18 +272,25 @@ BOARD_HTML = """
 """ + HEADER_HTML + """
 
 <form class="add" method="post" action="/tasks">
-  <textarea name="prompt" rows="2" placeholder="New task... (speak or type)" required
+  <input type="text" name="title" placeholder="Title..." required style="flex-basis:100%;padding:0.5rem;border-radius:6px;border:1px solid #ccc;font-size:0.9rem">
+  <textarea name="prompt" rows="1" placeholder="Description (optional detail for the agent)..."
     oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
-  <select name="priority">
-    <option value="medium">Medium</option>
-    <option value="high">High</option>
-    <option value="low">Low</option>
-  </select>
-  <select name="model">
-    <option value="sonnet">Sonnet</option>
-    <option value="opus">Opus</option>
-    <option value="haiku">Haiku</option>
-  </select>
+  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem">
+    Priority:
+    <select name="priority">
+      <option value="medium">Medium</option>
+      <option value="high">High</option>
+      <option value="low">Low</option>
+    </select>
+  </label>
+  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem" title="Applies to both plan and execution phases. Change them independently on the task detail page.">
+    Model (plan &amp; exec):
+    <select name="model">
+      <option value="sonnet">Sonnet</option>
+      <option value="opus">Opus</option>
+      <option value="haiku">Haiku</option>
+    </select>
+  </label>
   <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem;cursor:pointer">
     <input type="checkbox" name="auto_approve" value="1"> Auto-approve
   </label>
@@ -311,15 +319,9 @@ BOARD_HTML = """
     </h2>
     {% for t in tasks if t.status == col_status %}
     <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
-      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:50] }}{% if t.prompt|length > 50 %}...{% endif %}</a>
+      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ (t.get('title') or t.prompt)[:60] }}{% if (t.get('title') or t.prompt)|length > 60 %}...{% endif %}</a>
       <div class="meta">
-        <form method="post" action="/tasks/{{ t.id }}/set-priority" style="margin:0;display:inline">
-          <select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-{{ t.get('priority','medium') }}" style="padding:0.1rem 0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.65rem;font-weight:600;cursor:pointer">
-            <option value="high" {% if t.get('priority')=='high' %}selected{% endif %}>high</option>
-            <option value="medium" {% if t.get('priority','medium')=='medium' %}selected{% endif %}>medium</option>
-            <option value="low" {% if t.get('priority')=='low' %}selected{% endif %}>low</option>
-          </select>
-        </form>
+        {{ priority_select(t) }}
         <span class="badge badge-model">P:{{ t.get('plan_model', t.get('model','sonnet')) }}</span>
         <span class="badge badge-model">E:{{ t.get('exec_model', t.get('model','sonnet')) }}</span>
         {% if t.get('auto_approve') %}<span class="badge badge-auto">auto</span>{% endif %}
@@ -349,15 +351,9 @@ BOARD_HTML = """
     <h2>Stopped <span class="count">({{ stopped_tasks|length }})</span></h2>
     {% for t in stopped_tasks %}
     <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
-      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:50] }}{% if t.prompt|length > 50 %}...{% endif %}</a>
+      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ (t.get('title') or t.prompt)[:60] }}{% if (t.get('title') or t.prompt)|length > 60 %}...{% endif %}</a>
       <div class="meta">
-        <form method="post" action="/tasks/{{ t.id }}/set-priority" style="margin:0;display:inline">
-          <select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-{{ t.get('priority','medium') }}" style="padding:0.1rem 0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.65rem;font-weight:600;cursor:pointer">
-            <option value="high" {% if t.get('priority')=='high' %}selected{% endif %}>high</option>
-            <option value="medium" {% if t.get('priority','medium')=='medium' %}selected{% endif %}>medium</option>
-            <option value="low" {% if t.get('priority')=='low' %}selected{% endif %}>low</option>
-          </select>
-        </form>
+        {{ priority_select(t) }}
         {% if t.get('stop_reason') %}<span class="reason-tag">{{ t.stop_reason }}</span>{% endif %}
         {% if t.get('hidden') %}
         <form method="post" action="/tasks/{{ t.id }}/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>
@@ -374,15 +370,9 @@ BOARD_HTML = """
     <h2>Decomposed <span class="count">({{ decomposed_tasks|length }})</span></h2>
     {% for t in decomposed_tasks %}
     <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
-      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.prompt[:50] }}{% if t.prompt|length > 50 %}...{% endif %}</a>
+      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ (t.get('title') or t.prompt)[:60] }}{% if (t.get('title') or t.prompt)|length > 60 %}...{% endif %}</a>
       <div class="meta">
-        <form method="post" action="/tasks/{{ t.id }}/set-priority" style="margin:0;display:inline">
-          <select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-{{ t.get('priority','medium') }}" style="padding:0.1rem 0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.65rem;font-weight:600;cursor:pointer">
-            <option value="high" {% if t.get('priority')=='high' %}selected{% endif %}>high</option>
-            <option value="medium" {% if t.get('priority','medium')=='medium' %}selected{% endif %}>medium</option>
-            <option value="low" {% if t.get('priority')=='low' %}selected{% endif %}>low</option>
-          </select>
-        </form>
+        {{ priority_select(t) }}
         {% if t.get('hidden') %}
         <form method="post" action="/tasks/{{ t.id }}/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>
         {% else %}
@@ -408,7 +398,8 @@ BOARD_HTML = """
 
   function renderCard(t) {
     const cls = t.hidden ? ' hidden-card' : '';
-    const prompt = t.prompt.length > 50 ? esc(t.prompt.slice(0,50)) + '...' : esc(t.prompt);
+    const display = t.title || t.prompt;
+    const label = display.length > 60 ? esc(display.slice(0,60)) + '...' : esc(display);
     const prio = t.priority || 'medium';
     const planModel = t.plan_model || t.model || 'sonnet';
     const execModel = t.exec_model || t.model || 'sonnet';
@@ -438,7 +429,7 @@ BOARD_HTML = """
     const isReview = t.status === 'plan_review' || t.status === 'push_review';
     if (isReview) meta += '<a href="/tasks/' + t.id + '" class="btn-review">Review \u2192</a>';
     const cardCls = 'card' + cls + (isReview ? ' card-review' : '');
-    return '<div class="' + cardCls + '"><a href="/tasks/' + t.id + '">#' + t.id + ' ' + prompt + '</a><div class="meta">' + meta + '</div></div>';
+    return '<div class="' + cardCls + '"><a href="/tasks/' + t.id + '">#' + t.id + ' ' + label + '</a><div class="meta">' + meta + '</div></div>';
   }
 
   function renderCol(tasks, status) {
@@ -467,7 +458,7 @@ BOARD_HTML = """
           const existingCards = cols[i].querySelectorAll('.card, div[style]');
           existingCards.forEach(el => { if (!el.matches('h2')) el.remove(); });
           // Remove all children except h2
-          while (cols[i].children.length > 1) cols[i].removeChild(cols[i].lastChild);
+          while (cols[i].children.length > 1) cols[i].children[1].remove();
           cols[i].insertAdjacentHTML('beforeend', renderCol(tasks, status));
         }
       });
@@ -485,7 +476,7 @@ BOARD_HTML = """
             const countSpan = h2.querySelector('.count');
             if (countSpan) countSpan.textContent = '(' + items.length + ')';
           }
-          while (offCols[i].children.length > 1) offCols[i].removeChild(offCols[i].lastChild);
+          while (offCols[i].children.length > 1) offCols[i].children[1].remove();
           offCols[i].insertAdjacentHTML('beforeend', renderCol(tasks, status));
         }
       });
@@ -642,7 +633,10 @@ DETAIL_HTML = """
 """ + HEADER_HTML + """
 <div class="content">
 <p><a href="/">&larr; Board</a></p>
-<h1>#{{ task.id }} &mdash; {{ task.prompt }}</h1>
+<h1>#{{ task.id }} &mdash; {{ task.get('title') or task.prompt }}</h1>
+{% if task.get('title') and task.get('title') != task.prompt %}
+<p style="color:#555;margin:-0.5rem 0 1rem;font-size:0.9rem;white-space:pre-wrap">{{ task.prompt }}</p>
+{% endif %}
 
 {% if task.get('rate_limited_at') %}
 <div class="rate-limit-banner">
@@ -660,6 +654,8 @@ DETAIL_HTML = """
     <div class="edit-form" id="edit-form">
       <form method="post" action="/tasks/{{ task.id }}/edit">
         <p><strong>Edit Task</strong></p>
+        <input type="text" name="title" value="{{ task.get('title') or '' }}" placeholder="Title..."
+          style="width:100%;padding:0.4rem;border-radius:6px;border:1px solid #ccc;font-size:0.9rem;box-sizing:border-box;margin-bottom:0.4rem">
         <textarea name="prompt" rows="3"
           oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'">{{ task.prompt }}</textarea>
         <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
@@ -1158,7 +1154,7 @@ def board():
     data = load_tasks()
     show_hidden = request.args.get("show_hidden", "0") == "1"
     acc = session["account"]
-    tasks = [t for t in data["tasks"] if t.get("account", "personal") == acc]
+    tasks = [t for t in data["tasks"] if t.get("account", DEFAULT_ACCOUNT) == acc]
     if not show_hidden:
         tasks = [t for t in tasks if not t.get("hidden")]
     return render_template_string(
@@ -1172,6 +1168,7 @@ def add_task():
     """Create a new task with a full schema — all fields initialized upfront.
     This ensures the dispatcher, dependency graph, and web UI never encounter
     missing keys. Uses locked_update + next_id for atomic ID allocation."""
+    title = request.form.get("title", "").strip()
     prompt = request.form.get("prompt", "").strip()
     priority = request.form.get("priority", "medium")
     model = request.form.get("model", "sonnet")
@@ -1180,8 +1177,10 @@ def add_task():
         priority = "medium"
     if model not in ("sonnet", "opus", "haiku"):
         model = "sonnet"
-    if not prompt:
+    if not title:
         return redirect(url_for("board"))
+    if not prompt:
+        prompt = title  # agent uses title as description if no detail provided
 
     acc = session["account"]
     new_task = {}
@@ -1190,6 +1189,7 @@ def add_task():
         task = {
             "id": next_id(data),
             "status": "pending",
+            "title": title,
             "prompt": prompt,
             "priority": priority,
             "plan_model": model,
@@ -1243,6 +1243,7 @@ def edit_task(task_id: int):
     _, err = _check_owner(task_id)
     if err:
         return err
+    title = request.form.get("title", "").strip()
     prompt = request.form.get("prompt", "").strip()
     priority = request.form.get("priority", "medium")
     plan_model = request.form.get("plan_model", "sonnet")
@@ -1252,21 +1253,24 @@ def edit_task(task_id: int):
     if exec_model not in ("sonnet", "opus", "haiku"):
         exec_model = "sonnet"
 
-    changed = [False]
+    changed = False
 
     def mutate(data):
+        nonlocal changed
         for t in data["tasks"]:
             if t["id"] == task_id and t["status"] != "in_progress":
+                if title:
+                    t["title"] = title
                 if prompt:
                     t["prompt"] = prompt
                 t["priority"] = priority
                 t["plan_model"] = plan_model
                 t["exec_model"] = exec_model
-                changed[0] = True
+                changed = True
                 break
 
     locked_update(mutate)
-    if changed[0]:
+    if changed:
         log_progress(task_id, "edited", f"priority={priority}, plan={plan_model}, exec={exec_model}")
     return redirect(url_for("task_detail", task_id=task_id))
 
@@ -1338,15 +1342,16 @@ def delete_task(task_id: int):
     _, err = _check_owner(task_id)
     if err:
         return err
-    deleted = [False]
+    deleted = False
 
     def mutate(data):
+        nonlocal deleted
         before = len(data["tasks"])
         data["tasks"] = [t for t in data["tasks"] if t["id"] != task_id or t["status"] == "in_progress"]
-        deleted[0] = len(data["tasks"]) < before
+        deleted = len(data["tasks"]) < before
 
     locked_update(mutate)
-    if deleted[0]:
+    if deleted:
         log_progress(task_id, "deleted")
     return redirect(url_for("board"))
 
@@ -1386,12 +1391,13 @@ def approve_task(task_id: int):
                 data["tasks"].append({
                     "id": abs_ids[i],
                     "status": "pending",
+                    "title": s.get("title") or s["prompt"][:60],
                     "prompt": s["prompt"],
                     "priority": task.get("priority", "medium"),
                     "plan_model": task.get("plan_model", "sonnet"),
                     "exec_model": task.get("exec_model", "sonnet"),
                     "auto_approve": task.get("auto_approve", False),
-                    "account": task.get("account", "personal"),
+                    "account": task.get("account", DEFAULT_ACCOUNT),
                     "parent": task_id,
                     "depth": (task.get("depth") or 0) + 1,
                     "depends_on": abs_depends,
@@ -1494,6 +1500,7 @@ def retry_task(task_id: int):
                 t["completed_at"] = None
                 t["summary"] = None
                 t["result"] = None
+                t["report"] = None
                 t["plan"] = None
                 t["rejection_comments"] = []
                 t["retry_count"] = 0
@@ -1598,7 +1605,7 @@ def api_tasks():
     """Return tasks for the current account + dispatcher status as JSON for live AJAX polling."""
     data = load_tasks()
     acc = session["account"]
-    tasks = [t for t in data["tasks"] if t.get("account", "personal") == acc]
+    tasks = [t for t in data["tasks"] if t.get("account", DEFAULT_ACCOUNT) == acc]
     return jsonify({"tasks": tasks, "dispatcher": _read_dispatcher_status()})
 
 

@@ -18,7 +18,7 @@ _AGENT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_AGENT_DIR / "core"))
 
 from progress_logger import log_progress
-from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE, STATUS_FILE
+from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE, STATUS_FILE, DEFAULT_ACCOUNT
 
 _DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent.parent)
 WORKSPACE = os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE)
@@ -203,12 +203,13 @@ def build_plan_prompt(prompt: str, rejection_comments: list | None = None) -> st
         "\n"
         "For decompose:\n"
         '  {"decision": "decompose", "reasoning": "why decompose", "subtasks": [\n'
-        '    {"prompt": "full self-contained task description", "depends_on": []},\n'
-        '    {"prompt": "next subtask", "depends_on": [0]}\n'
+        '    {"title": "concise title (≤60 chars)", "prompt": "full self-contained task description", "depends_on": []},\n'
+        '    {"title": "next subtask title", "prompt": "next subtask", "depends_on": [0]}\n'
         "  ]}\n"
         "\n"
         "depends_on contains 0-based indices into the subtasks array (not task IDs).\n"
-        "Each subtask prompt must be fully self-contained — assume no shared context."
+        "Each subtask prompt must be fully self-contained — assume no shared context.\n"
+        "Each subtask title must be a concise human-readable label (≤60 chars) for display in the UI."
     )
 
     parts = [intro, decomposition_rules, json_spec]
@@ -237,7 +238,12 @@ def build_task_prompt(prompt: str, plan_text: str | None = None, task_id: int | 
         "Do NOT reference, read, or build upon any previous tasks, task history, "
         "PROGRESS.md entries, or prior task outputs. Treat this as a completely fresh request.\n\n"
         f"If you create any output files (stories, research docs, text, etc.), save them in "
-        f"`{artifact_dir}/`, NOT in the project root or `agent_log/` directly."
+        f"`{artifact_dir}/`, NOT in the project root or `agent_log/` directly.\n\n"
+        "RESULT FORMAT: When done, print a JSON object as the very last thing:\n"
+        '{"summary": "<one sentence describing what was done>", "artifacts": [...]}\n'
+        "For creative or text tasks (poems, stories, haiku, etc.), the actual content MUST be "
+        'in a text artifact: {"type": "text", "content": "<the actual text>"}. '
+        "The summary is only a short description — never put the content itself in summary."
     ]
     if plan_text:
         parts.append(f"APPROVED PLAN:\n{plan_text}")
@@ -245,17 +251,16 @@ def build_task_prompt(prompt: str, plan_text: str | None = None, task_id: int | 
     return "\n\n".join(parts)
 
 
+def _strip_fences(text: str) -> str:
+    """Strip markdown code fences (```json ... ``` or ``` ... ```) from text."""
+    m = re.search(r"```(?:json)?\s*([\s\S]+?)```", text.strip())
+    return m.group(1).strip() if m else text.strip()
+
+
 def parse_plan_decision(raw: str) -> dict:
-    """
-    Parse CC's plan-phase output as a JSON decision dict.
-    Strips markdown code fences; falls back to a synthetic 'execute' decision
-    with the raw output as the plan if JSON parsing fails. This ensures the
-    dispatcher always has a valid decision to act on.
-    """
-    text = raw.strip()
-    fenced = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
-    if fenced:
-        text = fenced.group(1).strip()
+    """Parse CC's plan-phase output as a JSON decision dict.
+    Falls back to a synthetic 'execute' decision if JSON parsing fails."""
+    text = _strip_fences(raw)
     try:
         obj = json.loads(text)
         if isinstance(obj, dict) and obj.get("decision") in ("execute", "decompose"):
@@ -313,18 +318,9 @@ def auto_detect_artifacts(result: dict, session_start: datetime, workspace: str)
 
 
 def parse_result_artifacts(output: str) -> dict:
-    """
-    Parse CC's execution output as a structured result dict.
-    Strips markdown code fences (same logic as parse_plan_decision), then tries
-    to parse as JSON. If the JSON is a dict with a "summary" key, treat it as
-    a structured result and filter artifacts to only known types.
-    Falls back to raw-text treatment if parsing fails or the shape is wrong.
-    Always returns {"summary": str, "artifacts": list}.
-    """
-    text = output.strip()
-    fenced = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
-    if fenced:
-        text = fenced.group(1).strip()
+    """Parse CC's execution output as a structured result dict.
+    Returns {"summary": str, "artifacts": list}."""
+    text = _strip_fences(output)
     try:
         obj = json.loads(text)
         if isinstance(obj, dict) and "summary" in obj:
@@ -498,7 +494,7 @@ def task_artifact_folder(task_id: int) -> Path:
 
     # Root task (last in chain) carries the account label
     root_task = task_map.get(chain[-1], {})
-    account = root_task.get("account", "personal")
+    account = root_task.get("account", DEFAULT_ACCOUNT)
 
     # chain is [task_id, parent_id, grandparent_id, ...] — reverse to get root-first
     chain.reverse()
@@ -536,9 +532,10 @@ def on_task_complete(task_id: int) -> int | None:
     Returns the parent_id if the parent's unresolved_children just reached 0
     (i.e., a rollup report should be generated), otherwise returns None.
     """
-    rollup_needed = [None]
+    rollup_needed = None
 
     def mutate(data):
+        nonlocal rollup_needed
         task_map = {t["id"]: t for t in data["tasks"]}
         completed = task_map.get(task_id)
         if completed is None:
@@ -559,7 +556,7 @@ def on_task_complete(task_id: int) -> int | None:
                 new_count = max(0, parent.get("unresolved_children", 0) - 1)
                 parent["unresolved_children"] = new_count
                 if new_count == 0:
-                    rollup_needed[0] = parent_id
+                    rollup_needed = parent_id
 
         # Leaf task: propagate result summary directly as the report
         if not completed.get("children"):
@@ -568,7 +565,7 @@ def on_task_complete(task_id: int) -> int | None:
                 completed["report"] = summary
 
     locked_update(mutate)
-    return rollup_needed[0]
+    return rollup_needed
 
 
 def generate_parent_report(parent_id: int) -> None:
@@ -589,7 +586,7 @@ def generate_parent_report(parent_id: int) -> None:
             continue
         summary = (child.get("result") or {}).get("summary") or child.get("report") or ""
         if summary:
-            parts.append(f"### Subtask #{child_id}: {child['prompt'][:80]}\n{summary}")
+            parts.append(f"### Subtask #{child_id}: {child.get('title') or child['prompt'][:80]}\n{summary}")
 
     if not parts:
         return
@@ -739,12 +736,13 @@ def _approve_decompose(task_id: int, decision: dict, plan_json: str) -> None:
             data["tasks"].append({
                 "id": abs_ids[i],
                 "status": "pending",
+                "title": s.get("title") or s["prompt"][:60],
                 "prompt": s["prompt"],
                 "priority": task.get("priority", "medium"),
                 "plan_model": task.get("plan_model", DEFAULT_MODEL),
                 "exec_model": task.get("exec_model", DEFAULT_MODEL),
                 "auto_approve": task.get("auto_approve", False),
-                "account": task.get("account", "personal"),
+                "account": task.get("account", DEFAULT_ACCOUNT),
                 "parent": task_id,
                 "depth": (task.get("depth") or 0) + 1,
                 "depends_on": abs_depends,
@@ -900,24 +898,23 @@ def execute_task(task: dict) -> None:
     task_id = task["id"]
     print(f"[dispatcher] Executing task #{task_id}: {task['prompt'][:80]}", flush=True)
 
-    # Increment retry count atomically before doing any work.
-    # Uses a mutable container to extract the value from the locked_update closure.
-    retry_count = [0]
+    retry_count = 0
 
     def bump_retry(data):
+        nonlocal retry_count
         for t in data["tasks"]:
             if t["id"] == task_id:
                 t["retry_count"] = t.get("retry_count", 0) + 1
-                retry_count[0] = t["retry_count"]
+                retry_count = t["retry_count"]
                 break
 
     locked_update(bump_retry)
 
-    if retry_count[0] > MAX_RETRIES:
+    if retry_count > MAX_RETRIES:
         update_task(task_id, status="stopped", stop_reason="loop_detected",
-                    summary=f"Task stopped after {retry_count[0] - 1} retries (MAX_RETRIES={MAX_RETRIES}).",
+                    summary=f"Task stopped after {retry_count - 1} retries (MAX_RETRIES={MAX_RETRIES}).",
                     progress_action="stopped", progress_details="loop_detected")
-        print(f"[dispatcher] Task #{task_id} loop detected after {retry_count[0] - 1} retries.", flush=True)
+        print(f"[dispatcher] Task #{task_id} loop detected after {retry_count - 1} retries.", flush=True)
         return
 
     session_start = datetime.now(timezone.utc)
