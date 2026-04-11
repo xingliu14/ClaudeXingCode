@@ -46,6 +46,7 @@ echo "[sync] → $VPS_USER@$VPS_HOST:$VPS_DIR"
 # shellcheck disable=SC2086
 rsync $RSYNC_FLAGS \
     --exclude=".git/" \
+    --exclude=".venv/" \
     --exclude="agent/.env" \
     --exclude="deploy/.env.vps" \
     --exclude="agent_log/" \
@@ -67,11 +68,11 @@ fi
 if [ "$REBUILD" = true ]; then
     echo "[sync] Rebuilding Docker image on VPS..."
     ssh "$VPS_USER@$VPS_HOST" \
-        "cd $VPS_DIR && docker build --build-arg HOST_UID=\$(id -u) -f agent/docker/Dockerfile -t claude-agent:latest agent/"
+        "cd $VPS_DIR && docker build -f agent/docker/Dockerfile -t claude-agent:latest agent/"
 fi
 
 echo "[sync] Restarting services..."
 ssh "$VPS_USER@$VPS_HOST" \
-    "sudo systemctl restart ralph-dispatcher@\$USER ralph-web@\$USER"
+    "sudo systemctl restart ralph-dispatcher ralph-web"
 
 echo "[sync] Done."

@@ -5,10 +5,10 @@ Requires=docker.service
 
 [Service]
 Type=simple
-User=%i
-WorkingDirectory=/home/%i/ClaudeXingCode
-EnvironmentFile=/home/%i/ClaudeXingCode/agent/.env
-ExecStart=/home/%i/ClaudeXingCode/.venv/bin/python3 /home/%i/ClaudeXingCode/agent/dispatcher/dispatcher.py
+User=root
+WorkingDirectory=/root/ClaudeXingCode
+EnvironmentFile=/root/ClaudeXingCode/agent/.env
+ExecStart=/root/ClaudeXingCode/.venv/bin/python3 /root/ClaudeXingCode/agent/dispatcher/dispatcher.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

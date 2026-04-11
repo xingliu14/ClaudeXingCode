@@ -1,0 +1,10 @@
+{
+  "xingliu": {
+    "password_hash": "pbkdf2:sha256:...(run add_account.py to generate)",
+    "account": "personal"
+  },
+  "friend": {
+    "password_hash": "pbkdf2:sha256:...",
+    "account": "test"
+  }
+}

@@ -478,13 +478,13 @@ def git_push() -> bool:
 def task_artifact_folder(task_id: int) -> Path:
     """Return the artifact folder path for a task, creating nested structure for subtasks.
 
-    Root task N       → <WORKSPACE>/agent_log/tasks/task_N/
+    Root task N       → <WORKSPACE>/agent_log/tasks/<account>/task_N/
     Subtask N (parent P, grandparent G, ...)
-                      → <WORKSPACE>/agent_log/tasks/task_G/.../task_P/task_N/
+                      → <WORKSPACE>/agent_log/tasks/<account>/task_G/.../task_P/task_N/
 
+    Account is read from the root task's 'account' field (default: 'personal').
     Walks the parent chain by loading tasks.json so the full ancestry is available.
     The folder is NOT created here — callers must mkdir as needed."""
-    tasks_root = Path(WORKSPACE) / "agent_log" / "tasks"
     data = load_tasks()
     task_map = {t["id"]: t for t in data["tasks"]}
 
@@ -496,9 +496,13 @@ def task_artifact_folder(task_id: int) -> Path:
         t = task_map.get(current_id)
         current_id = t.get("parent") if t else None
 
+    # Root task (last in chain) carries the account label
+    root_task = task_map.get(chain[-1], {})
+    account = root_task.get("account", "personal")
+
     # chain is [task_id, parent_id, grandparent_id, ...] — reverse to get root-first
     chain.reverse()
-    folder = tasks_root
+    folder = Path(WORKSPACE) / "agent_log" / "tasks" / account
     for tid in chain:
         folder = folder / f"task_{tid}"
     return folder
@@ -740,6 +744,7 @@ def _approve_decompose(task_id: int, decision: dict, plan_json: str) -> None:
                 "plan_model": task.get("plan_model", DEFAULT_MODEL),
                 "exec_model": task.get("exec_model", DEFAULT_MODEL),
                 "auto_approve": task.get("auto_approve", False),
+                "account": task.get("account", "personal"),
                 "parent": task_id,
                 "depth": (task.get("depth") or 0) + 1,
                 "depends_on": abs_depends,

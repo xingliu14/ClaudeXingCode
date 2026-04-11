@@ -29,17 +29,69 @@ from pathlib import Path
 _AGENT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_AGENT_DIR / "core"))
 
-from flask import Flask, redirect, render_template_string, request, url_for, jsonify
+import hashlib
+from functools import wraps
+from flask import Flask, redirect, render_template_string, request, url_for, jsonify, session
 from markupsafe import Markup
 import markdown as _markdown
+from werkzeug.security import check_password_hash
 from progress_logger import log_progress
 from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FILE, STATUS_FILE
+
+_ACCOUNTS_FILE = _AGENT_DIR / "accounts.json"
+
+def _load_accounts() -> dict:
+    """Load username → {password_hash, account} from accounts.json."""
+    if not _ACCOUNTS_FILE.exists():
+        return {}
+    try:
+        return json.loads(_ACCOUNTS_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
 
 _DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent.parent)
 WORKSPACE = Path(os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE))
 PROGRESS_FILE = WORKSPACE / "agent_log" / "agent_log.md"
 
 app = Flask(__name__)
+
+# Derive a stable secret key from the OAuth token so sessions survive restarts.
+# Override with FLASK_SECRET_KEY env var if needed.
+app.secret_key = os.environ.get(
+    "FLASK_SECRET_KEY",
+    hashlib.sha256(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "ralph-loop").encode()).digest(),
+)
+
+WEB_PORT = int(os.environ.get("WEB_PORT", 5001))
+
+
+@app.context_processor
+def _inject_user():
+    return {"username": session.get("username", "")}
+
+
+@app.before_request
+def _require_auth():
+    """Redirect unauthenticated requests to /login. API routes get JSON 401."""
+    if request.endpoint in ("login", "logout", "static"):
+        return None
+    if "account" not in session:
+        if request.path.startswith("/api/") or request.path == "/status":
+            return jsonify({"error": "not authenticated"}), 401
+        return redirect(url_for("login"))
+
+
+def _check_owner(task_id: int):
+    """Return (task, error) — error is a (message, code) tuple or None."""
+    acc = session.get("account", "personal")
+    data = load_tasks()
+    task = next((t for t in data["tasks"] if t["id"] == task_id), None)
+    if task is None:
+        return None, ("Task not found", 404)
+    if task.get("account", "personal") != acc:
+        return None, ("Forbidden", 403)
+    return task, None
+
 
 _PT = ZoneInfo("America/Los_Angeles")
 
@@ -118,6 +170,8 @@ HEADER_HTML = """
     <a href="/log">Git Log</a>
     <span id="review-badge"></span>
     <span id="dispatcher-status"></span>
+    <span style="color:#888;font-size:0.8rem">{{ username }}</span>
+    <a href="/logout" style="font-size:0.8rem">Sign out</a>
   </nav>
 </header>
 <script>
@@ -1040,11 +1094,73 @@ PIPELINE_COLS = [
 ]
 
 
+LOGIN_HTML = """<!DOCTYPE html>
+<html>
+<head>
+  <title>Sign in — Ralph Loop</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5;
+           display: flex; align-items: center; justify-content: center;
+           height: 100vh; margin: 0; }
+    .box { background: #fff; padding: 2rem; border-radius: 8px;
+           box-shadow: 0 2px 8px rgba(0,0,0,0.12); width: 320px; }
+    h1 { margin: 0 0 1.5rem; font-size: 1.3rem; color: #1a1a2e; }
+    input { width: 100%; padding: 0.6rem 0.75rem; margin-bottom: 1rem;
+            border: 1px solid #ddd; border-radius: 4px; font-size: 0.95rem; }
+    button { width: 100%; padding: 0.7rem; background: #1a1a2e; color: #fff;
+             border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; }
+    button:hover { background: #2d2d4e; }
+    .error { color: #dc2626; font-size: 0.85rem; margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Ralph Loop</h1>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form method="post">
+      <input type="text" name="username" placeholder="Username" autofocus>
+      <input type="password" name="password" placeholder="Password">
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>"""
+
+
+@app.get("/login")
+@app.post("/login")
+def login():
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        accounts = _load_accounts()
+        user = accounts.get(username)
+        if user and check_password_hash(user["password_hash"], password):
+            session["username"] = username
+            session["account"] = user["account"]
+            return redirect(url_for("board"))
+        error = "Invalid username or password."
+        if not accounts:
+            error = "No accounts configured. Run: python3 add_account.py USERNAME ACCOUNT"
+    return render_template_string(LOGIN_HTML, error=error)
+
+
+@app.get("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.get("/")
 def board():
     data = load_tasks()
     show_hidden = request.args.get("show_hidden", "0") == "1"
-    tasks = data["tasks"] if show_hidden else [t for t in data["tasks"] if not t.get("hidden")]
+    acc = session["account"]
+    tasks = [t for t in data["tasks"] if t.get("account", "personal") == acc]
+    if not show_hidden:
+        tasks = [t for t in tasks if not t.get("hidden")]
     return render_template_string(
         BOARD_HTML, tasks=tasks, pipeline_cols=PIPELINE_COLS, show_hidden=show_hidden,
         pipeline_cols_json=json.dumps(PIPELINE_COLS),
@@ -1067,6 +1183,7 @@ def add_task():
     if not prompt:
         return redirect(url_for("board"))
 
+    acc = session["account"]
     new_task = {}
 
     def mutate(data):
@@ -1078,6 +1195,7 @@ def add_task():
             "plan_model": model,
             "exec_model": model,
             "auto_approve": auto_approve,
+            "account": acc,
             "parent": None,
             "depth": 0,
             "blocked_on": [],
@@ -1102,10 +1220,10 @@ def add_task():
 
 @app.get("/tasks/<int:task_id>")
 def task_detail(task_id: int):
+    task, err = _check_owner(task_id)
+    if err:
+        return err
     data = load_tasks()
-    task = next((t for t in data["tasks"] if t["id"] == task_id), None)
-    if task is None:
-        return "Task not found", 404
     subtasks = [t for t in data["tasks"] if t.get("parent") == task_id]
     plan_parsed = None
     if task.get("plan"):
@@ -1122,6 +1240,9 @@ def task_detail(task_id: int):
 def edit_task(task_id: int):
     """Edit a task's prompt, priority, and models. Blocked for in_progress tasks
     to avoid mutating a task the dispatcher is actively running."""
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     prompt = request.form.get("prompt", "").strip()
     priority = request.form.get("priority", "medium")
     plan_model = request.form.get("plan_model", "sonnet")
@@ -1152,6 +1273,9 @@ def edit_task(task_id: int):
 
 @app.post("/tasks/<int:task_id>/set-priority")
 def set_priority(task_id: int):
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     priority = request.form.get("priority", "medium")
     if priority not in ("high", "medium", "low"):
         priority = "medium"
@@ -1169,6 +1293,9 @@ def set_priority(task_id: int):
 
 @app.post("/tasks/<int:task_id>/set-auto-approve")
 def set_auto_approve(task_id: int):
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     auto_approve = request.form.get("auto_approve") == "1"
 
     def mutate(data):
@@ -1183,6 +1310,9 @@ def set_auto_approve(task_id: int):
 
 @app.post("/tasks/<int:task_id>/set-model")
 def set_model(task_id: int):
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     plan_model = request.form.get("plan_model", "")
     exec_model = request.form.get("exec_model", "")
     valid = ("sonnet", "opus", "haiku")
@@ -1205,6 +1335,9 @@ def delete_task(task_id: int):
     """Delete a task unless it's currently in_progress (safety guard).
     Uses a closure flag to only log if the task was actually removed — this
     pattern prevents phantom log entries from stale form resubmissions."""
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     deleted = [False]
 
     def mutate(data):
@@ -1225,6 +1358,10 @@ def approve_task(task_id: int):
     - 'decompose' decision: create subtasks, set parent to 'decomposed'
     NOTE: The decompose logic here mirrors dispatcher._approve_decompose — keep in sync.
     """
+    _, err = _check_owner(task_id)
+    if err:
+        return err
+
     def mutate(data):
         task = next((t for t in data["tasks"] if t["id"] == task_id), None)
         if task is None or task["status"] != "plan_review":
@@ -1254,6 +1391,7 @@ def approve_task(task_id: int):
                     "plan_model": task.get("plan_model", "sonnet"),
                     "exec_model": task.get("exec_model", "sonnet"),
                     "auto_approve": task.get("auto_approve", False),
+                    "account": task.get("account", "personal"),
                     "parent": task_id,
                     "depth": (task.get("depth") or 0) + 1,
                     "depends_on": abs_depends,
@@ -1295,6 +1433,9 @@ def reject_task(task_id: int):
     Clears the plan, appends the rejection feedback to the task's history,
     and resets status to 'pending'. The dispatcher will re-plan with the
     accumulated rejection comments as additional context for the model."""
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     feedback = request.form.get("feedback", "").strip()
 
     def mutate(data):
@@ -1320,6 +1461,9 @@ def cancel_task(task_id: int):
     """Stop an active task. Only applies to in_progress or plan_review — the
     dispatcher may be mid-execution when this fires, but the status change
     prevents it from being picked up again on the next iteration."""
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id and t["status"] in ("in_progress", "plan_review"):
@@ -1340,6 +1484,9 @@ def retry_task(task_id: int):
     rejection history, stop reason, retry count, and push timestamp.
     Critical: retry_count must be reset to 0 or the doom loop guard in
     execute_task will incorrectly count prior attempts against the new run."""
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id and t["status"] in ("stopped", "done"):
@@ -1361,6 +1508,9 @@ def retry_task(task_id: int):
 
 @app.post("/tasks/<int:task_id>/approve-push")
 def approve_push(task_id: int):
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id and t["status"] == "push_review":
@@ -1374,6 +1524,9 @@ def approve_push(task_id: int):
 
 @app.post("/tasks/<int:task_id>/reject-push")
 def reject_push(task_id: int):
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id and t["status"] == "push_review":
@@ -1388,6 +1541,9 @@ def reject_push(task_id: int):
 
 @app.post("/tasks/<int:task_id>/hide")
 def hide_task(task_id: int):
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id:
@@ -1400,6 +1556,9 @@ def hide_task(task_id: int):
 
 @app.post("/tasks/<int:task_id>/unhide")
 def unhide_task(task_id: int):
+    _, err = _check_owner(task_id)
+    if err:
+        return err
     def mutate(data):
         for t in data["tasks"]:
             if t["id"] == task_id:
@@ -1436,12 +1595,11 @@ def git_log():
 
 @app.get("/api/tasks")
 def api_tasks():
-    """Return all tasks + dispatcher status as JSON for live AJAX polling.
-    The board and detail pages poll this endpoint every 3s to update
-    without full page reloads. Returns ALL tasks (including hidden) so the
-    client-side JS can apply its own filtering based on the show_hidden toggle."""
+    """Return tasks for the current account + dispatcher status as JSON for live AJAX polling."""
     data = load_tasks()
-    return jsonify({"tasks": data["tasks"], "dispatcher": _read_dispatcher_status()})
+    acc = session["account"]
+    tasks = [t for t in data["tasks"] if t.get("account", "personal") == acc]
+    return jsonify({"tasks": tasks, "dispatcher": _read_dispatcher_status()})
 
 
 @app.get("/status")
@@ -1457,4 +1615,5 @@ def dispatcher_status():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001, debug=False, use_reloader=True)
+    use_reloader = os.environ.get("FLASK_ENV") == "development"
+    app.run(host="0.0.0.0", port=WEB_PORT, debug=False, use_reloader=use_reloader)
