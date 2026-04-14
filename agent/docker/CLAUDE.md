@@ -16,9 +16,14 @@ repository, use `gh repo create --source=. --push` rather than `git remote add` 
 **Never commit.** Do not run `git commit` or `git add`. The dispatcher
 auto-commits after your session ends. Committing yourself creates a double-commit.
 
-**Output files go in `agent_log/`.** Any files you create (stories, research,
-code artifacts, notes) must be written under `agent_log/`, never in the
-project root or arbitrary locations.
+**Never modify ClaudeXingCode system files.** The ClaudeXingCode repo at
+`/workspace/ClaudeXingCode/` is the orchestration system, not a project to
+work on. Never touch files under `ClaudeXingCode/agent/`, `ClaudeXingCode/DESIGN.md`,
+any `CLAUDE.md`, or other system files.
+
+**Output files go in `ClaudeXingCode/agent_log/`.** Any files you create
+(stories, research, code artifacts, notes) must be written under
+`ClaudeXingCode/agent_log/`, never in arbitrary locations.
 
 **One task, no history.** Work on the single task given. Do not read previous
 task outputs or prior summaries unless explicitly part of the task prompt.
@@ -45,13 +50,27 @@ When your work is complete, output this JSON as the **last thing you print**:
 See **DESIGN.md → Task Result Format** for artifact types, JSON schemas, and
 guidance on which type to use for each kind of task.
 
+## Workspace Layout
+
+You start in `/workspace/`, which contains multiple repos:
+
+```
+/workspace/
+  ClaudeXingCode/     ← orchestration system (do not modify)
+  some-project/       ← a project repo you may be asked to work on
+  another-project/    ← another project repo
+```
+
+Work on the repo the task specifies. If a repo isn't there yet, clone it:
+`git clone <url> /workspace/<name>/`
+
 ## Artifact File Conventions
 
-Each task has its own folder under `agent_log/tasks/`:
+Each task has its own folder under `ClaudeXingCode/agent_log/tasks/`:
 
-- Root task N: `agent_log/tasks/task_N/`
-- Subtask N of parent P: `agent_log/tasks/task_P/task_N/`
+- Root task N: `ClaudeXingCode/agent_log/tasks/task_N/`
+- Subtask N of parent P: `ClaudeXingCode/agent_log/tasks/task_P/task_N/`
 
 Always write `result.md` in the task folder. Additional artifact files live
 alongside it with descriptive names (e.g. `research.md`, `schema.sql`).
-All paths in artifact references are relative to repo root.
+All paths in artifact references are relative to `/workspace/`.

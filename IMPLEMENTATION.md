@@ -16,7 +16,7 @@
 | 10 | Dependency Graph Enforcement | Done |
 | 11 | Doom Loop Detection | Done |
 | 12 | Typed Result + Artifact Storage | Done |
-| 13 | VPS Deployment | In progress — awaiting human VPS setup |
+| 13 | VPS Deployment | Done |
 
 ---
 
@@ -258,7 +258,7 @@ ClaudeXingCode/
 
 ---
 
-### Phase 13: VPS Deployment — In progress
+### Phase 13: VPS Deployment — Done
 
 Goal: migrate from local Mac to a headless Ubuntu 22.04 VPS reachable via HTTPS.
 

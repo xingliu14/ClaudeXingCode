@@ -22,6 +22,17 @@ from task_store import load_tasks, save_tasks, locked_update, next_id, TASKS_FIL
 
 _DEFAULT_WORKSPACE = str(Path(__file__).resolve().parent.parent.parent)
 WORKSPACE = os.environ.get("WORKSPACE", _DEFAULT_WORKSPACE)
+
+# DOCKER_MOUNT is the directory mounted into the container at /workspace.
+# Defaults to the parent of WORKSPACE so the container sees all sibling repos.
+# Set DOCKER_MOUNT explicitly if WORKSPACE is already the root you want mounted.
+_WORKSPACE_PATH = Path(WORKSPACE).resolve()
+_DEFAULT_DOCKER_MOUNT = str(_WORKSPACE_PATH.parent)
+DOCKER_MOUNT = os.environ.get("DOCKER_MOUNT", _DEFAULT_DOCKER_MOUNT)
+# Relative path from DOCKER_MOUNT to WORKSPACE, e.g. "ClaudeXingCode".
+# Used to build /workspace/<WORKSPACE_REL> inside the container.
+WORKSPACE_REL = str(_WORKSPACE_PATH.relative_to(Path(DOCKER_MOUNT).resolve()))
+
 TOKEN_BACKOFF_SECONDS = int(os.environ.get("TOKEN_BACKOFF_SECONDS", "3600"))
 MAX_SUB_TASK_DEPTH = int(os.environ.get("MAX_SUB_TASK_DEPTH", "9"))
 MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
@@ -387,7 +398,7 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
-    docker_cmd = ["docker", "run", "--rm", "-v", f"{WORKSPACE}:/workspace"]
+    docker_cmd = ["docker", "run", "--rm", "-v", f"{DOCKER_MOUNT}:/workspace"]
 
     if oauth_token:
         docker_cmd += ["-e", f"CLAUDE_CODE_OAUTH_TOKEN={oauth_token}"]
@@ -410,6 +421,8 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
         if val:
             docker_cmd += ["-e", f"{env_var}={val}"]
 
+    # Start CC at the mount root so it can see all repos under /workspace/.
+    # ClaudeXingCode (and its agent_log/) is at /workspace/WORKSPACE_REL.
     docker_cmd += ["-w", "/workspace", DOCKER_IMAGE] + cc_cmd
 
     print(f"[dispatcher] Running CC in Docker ({DOCKER_IMAGE})...", flush=True)
@@ -439,21 +452,41 @@ def git_commit(message: str) -> bool:
     git_cmd = f"git add -A && git commit -m '{safe_msg}'"
     docker_cmd = [
         "docker", "run", "--rm",
-        "-v", f"{WORKSPACE}:/workspace",
-        "-w", "/workspace",
+        "-v", f"{DOCKER_MOUNT}:/workspace",
+        "-w", f"/workspace/{WORKSPACE_REL}",
         DOCKER_IMAGE,
         "bash", "-c", git_cmd,
     ]
     result = subprocess.run(docker_cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        nothing_to_commit = "nothing to commit" in result.stdout + result.stderr
-        if nothing_to_commit:
+        output = result.stdout + result.stderr
+        if "nothing to commit" in output:
+            return False
+        if "not a git repository" in output:
+            print(
+                f"[dispatcher] ERROR: workspace at {WORKSPACE!r} is not a git repository. "
+                "Run `git init && git remote add origin <url>` in the workspace, "
+                "then retry this task.",
+                flush=True,
+            )
             return False
         # Fallback to local git if Docker fails (e.g., image not available)
         print(f"[dispatcher] Docker git commit failed, falling back to local: {result.stderr[:200]}", flush=True)
-        add = subprocess.run(["git", "add", "-A"], cwd=WORKSPACE, capture_output=True)
-        commit = subprocess.run(["git", "commit", "-m", message], cwd=WORKSPACE, capture_output=True)
-        return commit.returncode == 0
+        add = subprocess.run(["git", "add", "-A"], cwd=WORKSPACE, capture_output=True, text=True)
+        commit = subprocess.run(["git", "commit", "-m", message], cwd=WORKSPACE, capture_output=True, text=True)
+        if commit.returncode != 0:
+            local_output = add.stdout + add.stderr + commit.stdout + commit.stderr
+            if "not a git repository" in local_output:
+                print(
+                    f"[dispatcher] ERROR: workspace at {WORKSPACE!r} is not a git repository. "
+                    "Run `git init && git remote add origin <url>` in the workspace, "
+                    "then retry this task.",
+                    flush=True,
+                )
+            else:
+                print(f"[dispatcher] Local git commit also failed: {local_output[:200]}", flush=True)
+            return False
+        return True
     return True
 
 

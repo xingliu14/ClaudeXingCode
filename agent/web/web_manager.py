@@ -1093,7 +1093,7 @@ PIPELINE_COLS = [
 LOGIN_HTML = """<!DOCTYPE html>
 <html>
 <head>
-  <title>Sign in — Ralph Loop</title>
+  <title>Sign in — Xingent</title>
   <style>
     * { box-sizing: border-box; }
     body { font-family: system-ui, sans-serif; background: #f5f5f5;
@@ -1112,7 +1112,7 @@ LOGIN_HTML = """<!DOCTYPE html>
 </head>
 <body>
   <div class="box">
-    <h1>Ralph Loop</h1>
+    <h1>Xingent</h1>
     {% if error %}<p class="error">{{ error }}</p>{% endif %}
     <form method="post">
       <input type="text" name="username" placeholder="Username" autofocus>

@@ -5,9 +5,9 @@ After=network.target
 [Service]
 Type=simple
 User=%i
-WorkingDirectory=/home/%i/ClaudeXingCode
-EnvironmentFile=/home/%i/ClaudeXingCode/agent/.env
-ExecStart=/home/%i/ClaudeXingCode/.venv/bin/python3 /home/%i/ClaudeXingCode/agent/web/web_manager.py
+WorkingDirectory=%h/workspace/ClaudeXingCode
+EnvironmentFile=%h/workspace/ClaudeXingCode/agent/.env
+ExecStart=%h/workspace/ClaudeXingCode/.venv/bin/python3 %h/workspace/ClaudeXingCode/agent/web/web_manager.py
 Restart=always
 RestartSec=5
 StandardOutput=journal

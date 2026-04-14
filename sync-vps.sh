@@ -2,14 +2,21 @@
 # sync-vps.sh — Sync local changes to VPS and restart services.
 #
 # Usage:
-#   ./sync-vps.sh              # Sync code + restart services
-#   ./sync-vps.sh --dry-run    # Preview what would change (no writes)
+#   ./sync-vps.sh              # Sync ClaudeXingCode + restart services
 #   ./sync-vps.sh --rebuild    # Sync + rebuild Docker image + restart
+#   ./sync-vps.sh --dry-run    # Preview without making changes
+#   ./sync-vps.sh --all        # Sync ALL ~/Develop repos to VPS workspace
+#   ./sync-vps.sh --all --dry-run
 #
 # Config: copy deploy/.env.vps.example → deploy/.env.vps and fill in values.
+# Repos excluded from --all: vllm (too large / external framework)
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOCAL_DEVELOP="$(dirname "$SCRIPT_DIR")"   # ~/Develop (parent of ClaudeXingCode)
+
+# Repos under LOCAL_DEVELOP to skip when using --all
+SKIP_REPOS=("vllm")
 
 # Load VPS connection config
 ENV_VPS="$SCRIPT_DIR/deploy/.env.vps"
@@ -19,7 +26,8 @@ fi
 
 VPS_USER="${VPS_USER:-}"
 VPS_HOST="${VPS_HOST:-}"
-VPS_DIR="${VPS_DIR:-~/ClaudeXingCode}"
+VPS_DIR="${VPS_DIR:-/root/workspace/ClaudeXingCode}"
+VPS_WORKSPACE="${VPS_WORKSPACE:-/root/workspace}"
 
 if [ -z "$VPS_HOST" ] || [ -z "$VPS_USER" ]; then
     echo "Error: VPS_HOST and VPS_USER must be set."
@@ -29,42 +37,92 @@ fi
 
 DRY_RUN=false
 REBUILD=false
+ALL=false
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=true ;;
         --rebuild) REBUILD=true ;;
+        --all)     ALL=true ;;
     esac
 done
 
 RSYNC_FLAGS="-avz --delete"
 [ "$DRY_RUN" = true ] && RSYNC_FLAGS="$RSYNC_FLAGS --dry-run"
 
-echo "[sync] → $VPS_USER@$VPS_HOST:$VPS_DIR"
+# Common exclusions applied to every repo sync
+COMMON_EXCLUDES=(
+    "--exclude=.git/"
+    "--exclude=.venv/"
+    "--exclude=node_modules/"
+    "--exclude=__pycache__/"
+    "--exclude=*.pyc"
+    "--exclude=.pytest_cache/"
+    "--exclude=.DS_Store"
+    "--exclude=*.log"
+    "--exclude=dist/"
+    "--exclude=build/"
+    "--exclude=.next/"
+    "--exclude=.nuxt/"
+)
 
-# Sync code — exclude credentials, runtime state, and generated artifacts.
-# --delete is safe here because excluded paths on the destination are NOT removed.
+# ---------------------------------------------------------------------------
+# Sync ClaudeXingCode (always, even with --all)
+# ---------------------------------------------------------------------------
+echo "[sync] ClaudeXingCode → $VPS_USER@$VPS_HOST:$VPS_DIR"
 # shellcheck disable=SC2086
 rsync $RSYNC_FLAGS \
-    --exclude=".git/" \
-    --exclude=".venv/" \
-    --exclude="agent/.env" \
-    --exclude="deploy/.env.vps" \
-    --exclude="agent_log/" \
-    --exclude="tasks.json" \
-    --exclude="tasks.lock" \
-    --exclude="tasks.tmp" \
-    --exclude="__pycache__/" \
-    --exclude="*.pyc" \
-    --exclude=".pytest_cache/" \
-    --exclude=".DS_Store" \
+    "${COMMON_EXCLUDES[@]}" \
+    "--exclude=agent/.env" \
+    "--exclude=deploy/.env.vps" \
+    "--exclude=agent_log/" \
+    "--exclude=tasks.json" \
+    "--exclude=tasks.lock" \
+    "--exclude=tasks.tmp" \
     "$SCRIPT_DIR/" \
     "$VPS_USER@$VPS_HOST:$VPS_DIR/"
 
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = true ] && [ "$ALL" = false ]; then
     echo "[sync] Dry run complete — no changes made."
     exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# Sync all other repos under ~/Develop (--all flag)
+# ---------------------------------------------------------------------------
+if [ "$ALL" = true ]; then
+    for repo_path in "$LOCAL_DEVELOP"/*/; do
+        repo_name="$(basename "$repo_path")"
+
+        # Skip ClaudeXingCode (already synced above)
+        [ "$repo_name" = "ClaudeXingCode" ] && continue
+
+        # Skip explicitly excluded repos
+        skip=false
+        for skip_repo in "${SKIP_REPOS[@]}"; do
+            [ "$repo_name" = "$skip_repo" ] && skip=true && break
+        done
+        if [ "$skip" = true ]; then
+            echo "[sync] Skipping $repo_name (in skip list)"
+            continue
+        fi
+
+        echo "[sync] $repo_name → $VPS_USER@$VPS_HOST:$VPS_WORKSPACE/$repo_name"
+        # shellcheck disable=SC2086
+        rsync $RSYNC_FLAGS \
+            "${COMMON_EXCLUDES[@]}" \
+            "$repo_path" \
+            "$VPS_USER@$VPS_HOST:$VPS_WORKSPACE/$repo_name/"
+    done
+
+    if [ "$DRY_RUN" = true ]; then
+        echo "[sync] Dry run complete — no changes made."
+        exit 0
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Post-sync actions (skip for dry run)
+# ---------------------------------------------------------------------------
 if [ "$REBUILD" = true ]; then
     echo "[sync] Rebuilding Docker image on VPS..."
     ssh "$VPS_USER@$VPS_HOST" \
@@ -73,6 +131,15 @@ fi
 
 echo "[sync] Restarting services..."
 ssh "$VPS_USER@$VPS_HOST" \
-    "sudo systemctl restart ralph-dispatcher ralph-web"
+    "sudo systemctl restart ralph-dispatcher ralph-web 2>/dev/null \
+     || sudo systemctl restart ralph-dispatcher@root ralph-web@root 2>/dev/null \
+     || echo '[sync] Warning: could not restart services — check systemctl status'"
 
 echo "[sync] Done."
+
+# Warn if the remote workspace is not a git repo
+ssh "$VPS_USER@$VPS_HOST" \
+    "cd $VPS_DIR && git rev-parse --is-inside-work-tree > /dev/null 2>&1 \
+      || echo '[sync] WARNING: $VPS_DIR is not a git repository on the VPS. \
+Coding tasks will silently fail to commit. Fix: ssh in and run: \
+git init && git remote add origin <url> && git config user.name/email'"
