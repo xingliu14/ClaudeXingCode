@@ -48,6 +48,13 @@ ARG HOST_UID=1000
 RUN useradd -m -s /bin/bash -u ${HOST_UID} agent \
     && mkdir -p /home/agent/.claude \
     && chown agent:agent /home/agent/.claude
+
+# Entrypoint wires up gh as the git credential helper at container start,
+# enabling `git push` over HTTPS when GH_TOKEN is injected by the dispatcher.
+# Must be copied and chmod'd before USER agent (needs root to write to /).
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 USER agent
 
 # Bake execution-specific instructions into the image.
@@ -59,3 +66,4 @@ USER agent
 COPY --chown=agent:agent docker/CLAUDE.md /home/agent/.claude/CLAUDE.md
 
 WORKDIR /workspace
+ENTRYPOINT ["/entrypoint.sh"]

@@ -207,7 +207,10 @@ class TestDependencyGraphIntegration:
 
         # Step 1: approve via web route
         web_manager.app.config["TESTING"] = True
+        web_manager.app.config["SECRET_KEY"] = "test-secret"
         with web_manager.app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess["account"] = "personal"
             assert client.post("/tasks/1/approve").status_code == 302
 
         tasks = {t["id"]: t for t in json.loads(tf.read_text())["tasks"]}

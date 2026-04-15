@@ -3,7 +3,7 @@
 
 Reads deploy/.env.vps for connection config (VPS_HOST, VPS_USER, VPS_DIR).
 Only syncs tasks with account="personal" — test account stays on VPS.
-Output lands in vps-backup/ (gitignored).
+Overwrites local tasks.json and agent_log/ directly.
 
 Usage:
     python3 sync-from-vps.py
@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-BACKUP_DIR = SCRIPT_DIR / "vps-backup"
 PERSONAL_ACCOUNT = "personal"
 
 
@@ -50,11 +49,9 @@ def main() -> None:
     remote = f"{vps_user}@{vps_host}"
     print(f"[sync-from-vps] ← {remote}:{vps_dir}")
 
-    BACKUP_DIR.mkdir(exist_ok=True)
-
     # 1. Download tasks.json from VPS
     print("[sync-from-vps] Downloading tasks.json...")
-    tasks_tmp = BACKUP_DIR / "tasks.json.tmp"
+    tasks_tmp = SCRIPT_DIR / "tasks.json.tmp"
     run(["scp", f"{remote}:{vps_dir}/tasks.json", str(tasks_tmp)])
 
     data = json.loads(tasks_tmp.read_text())
@@ -80,12 +77,12 @@ def main() -> None:
     # 3. Save filtered tasks.json locally
     filtered = {k: v for k, v in data.items() if k != "tasks"}
     filtered["tasks"] = personal_tasks
-    local_tasks = BACKUP_DIR / "tasks.json"
+    local_tasks = SCRIPT_DIR / "tasks.json"
     local_tasks.write_text(json.dumps(filtered, indent=2))
-    print(f"[sync-from-vps] Saved vps-backup/tasks.json")
+    print(f"[sync-from-vps] Saved tasks.json")
 
     # 4. Sync activity log (full log — entries don't split cleanly by account)
-    agent_log_dir = BACKUP_DIR / "agent_log"
+    agent_log_dir = SCRIPT_DIR / "agent_log"
     agent_log_dir.mkdir(exist_ok=True)
     print("[sync-from-vps] Syncing activity log...")
     for log_file in ("entries.jsonl", "agent_log.md"):
@@ -104,7 +101,7 @@ def main() -> None:
             local_path = str(tasks_dir / folder) + "/"
             run(["rsync", "-az", "--delete", remote_path, local_path])
 
-    print("[sync-from-vps] Done. Backup in vps-backup/")
+    print("[sync-from-vps] Done.")
 
 
 if __name__ == "__main__":

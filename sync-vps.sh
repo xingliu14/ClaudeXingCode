@@ -123,11 +123,20 @@ fi
 # ---------------------------------------------------------------------------
 # Post-sync actions (skip for dry run)
 # ---------------------------------------------------------------------------
+
+# Update Claude Code on the VPS host (used for the plan phase).
+echo "[sync] Updating Claude Code on VPS host..."
+ssh "$VPS_USER@$VPS_HOST" "npm update -g @anthropic-ai/claude-code"
+
 if [ "$REBUILD" = true ]; then
-    echo "[sync] Rebuilding Docker image on VPS..."
+    echo "[sync] Rebuilding Docker image on VPS (includes latest Claude Code)..."
     ssh "$VPS_USER@$VPS_HOST" \
-        "cd $VPS_DIR && docker build -f agent/docker/Dockerfile -t claude-agent:latest agent/"
+        "cd $VPS_DIR && docker build --no-cache -f agent/docker/Dockerfile -t claude-agent:latest agent/"
 fi
+
+# Fix file ownership — rsync transfers files with the local user's UID which
+# causes git "dubious ownership" errors on the VPS.
+ssh "$VPS_USER@$VPS_HOST" "chown -R 1000:1000 $VPS_WORKSPACE"
 
 echo "[sync] Restarting services..."
 ssh "$VPS_USER@$VPS_HOST" \
@@ -136,10 +145,3 @@ ssh "$VPS_USER@$VPS_HOST" \
      || echo '[sync] Warning: could not restart services — check systemctl status'"
 
 echo "[sync] Done."
-
-# Warn if the remote workspace is not a git repo
-ssh "$VPS_USER@$VPS_HOST" \
-    "cd $VPS_DIR && git rev-parse --is-inside-work-tree > /dev/null 2>&1 \
-      || echo '[sync] WARNING: $VPS_DIR is not a git repository on the VPS. \
-Coding tasks will silently fail to commit. Fix: ssh in and run: \
-git init && git remote add origin <url> && git config user.name/email'"

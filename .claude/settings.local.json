@@ -13,7 +13,8 @@
       "WebFetch(domain:openai.com)",
       "WebFetch(domain:www.nxcode.io)",
       "WebFetch(domain:martinfowler.com)",
-      "WebFetch(domain:www.infoq.com)"
+      "WebFetch(domain:www.infoq.com)",
+      "Skill(update-config)"
     ]
   },
   "defaultMode": "bypassPermissions"

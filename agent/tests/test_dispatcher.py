@@ -80,7 +80,7 @@ class TestPickNextTask:
     def test_skips_non_pending(self):
         tasks = [
             {"id": 1, "status": "done", "priority": "high"},
-            {"id": 2, "status": "in_progress", "priority": "high"},
+            {"id": 2, "status": "executing", "priority": "high"},
             {"id": 3, "status": "pending", "priority": "low"},
         ]
         assert pick_next_task(tasks)["id"] == 3
@@ -112,45 +112,44 @@ class TestPickNextTask:
 
 
 class TestPickApprovedTask:
-    """pick_approved_task returns in_progress tasks with a plan (approved, awaiting execution).
+    """pick_approved_task returns executing tasks (approved, awaiting Docker execution).
     Same priority/id sorting as pick_next_task."""
 
     def test_returns_none_when_empty(self):
         assert pick_approved_task([]) is None
 
-    def test_returns_none_when_no_in_progress_with_plan(self):
+    def test_returns_none_when_no_executing(self):
         tasks = [
-            {"id": 1, "status": "in_progress", "priority": "high"},  # no plan
+            {"id": 1, "status": "planning", "priority": "high"},
             {"id": 2, "status": "pending", "priority": "high", "plan": "p"},
         ]
         assert pick_approved_task(tasks) is None
 
-    def test_picks_in_progress_with_plan(self):
+    def test_picks_executing(self):
         tasks = [
-            {"id": 1, "status": "in_progress", "priority": "medium", "plan": "the plan"},
+            {"id": 1, "status": "executing", "priority": "medium", "plan": "the plan"},
             {"id": 2, "status": "pending", "priority": "high"},
         ]
         assert pick_approved_task(tasks)["id"] == 1
 
     def test_picks_highest_priority(self):
         tasks = [
-            {"id": 1, "status": "in_progress", "priority": "low", "plan": "p"},
-            {"id": 2, "status": "in_progress", "priority": "high", "plan": "p"},
+            {"id": 1, "status": "executing", "priority": "low", "plan": "p"},
+            {"id": 2, "status": "executing", "priority": "high", "plan": "p"},
         ]
         assert pick_approved_task(tasks)["id"] == 2
 
     def test_breaks_ties_by_id(self):
         tasks = [
-            {"id": 5, "status": "in_progress", "priority": "high", "plan": "p"},
-            {"id": 3, "status": "in_progress", "priority": "high", "plan": "p"},
+            {"id": 5, "status": "executing", "priority": "high", "plan": "p"},
+            {"id": 3, "status": "executing", "priority": "high", "plan": "p"},
         ]
         assert pick_approved_task(tasks)["id"] == 3
 
-    def test_skips_null_plan(self):
-        """A task with plan=None (explicitly set, not missing key) should be skipped.
-        t.get("plan") returns None which is falsy — same behavior as missing key."""
+    def test_skips_non_executing(self):
+        """Only 'executing' status is picked — planning tasks are not yet approved."""
         tasks = [
-            {"id": 1, "status": "in_progress", "priority": "high", "plan": None},
+            {"id": 1, "status": "planning", "priority": "high", "plan": None},
             {"id": 2, "status": "pending", "priority": "low"},
         ]
         assert pick_approved_task(tasks) is None
@@ -163,7 +162,7 @@ class TestPickActionableTask:
     def test_prefers_approved_over_pending(self):
         tasks = [
             {"id": 1, "status": "pending", "priority": "high"},
-            {"id": 2, "status": "in_progress", "priority": "low", "plan": "approved plan"},
+            {"id": 2, "status": "executing", "priority": "low", "plan": "approved plan"},
         ]
         assert pick_actionable_task(tasks)["id"] == 2
 
@@ -277,13 +276,14 @@ class TestRunCC:
         model_idx = cmd.index("--model")
         assert cmd[model_idx + 1] == "claude-opus-4-6"
 
-    def test_execute_runs_in_docker(self, monkeypatch):
+    def test_execute_runs_in_docker(self, monkeypatch, tmp_path):
         mock_run = MagicMock(return_value=MagicMock(
             returncode=0, stdout="exec output", stderr="warn"
         ))
         monkeypatch.setattr("subprocess.run", mock_run)
+        monkeypatch.setattr(dispatcher, "task_artifact_folder", lambda tid: tmp_path / f"task_{tid}")
 
-        code, output = dispatcher.run_cc_docker("do something")
+        code, output = dispatcher.run_cc_docker("do something", task_id=1)
 
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "docker"
@@ -293,13 +293,14 @@ class TestRunCC:
         assert "--model" in cmd
         assert code == 0
 
-    def test_execute_uses_specified_model(self, monkeypatch):
+    def test_execute_uses_specified_model(self, monkeypatch, tmp_path):
         mock_run = MagicMock(return_value=MagicMock(
             returncode=0, stdout="exec output", stderr=""
         ))
         monkeypatch.setattr("subprocess.run", mock_run)
+        monkeypatch.setattr(dispatcher, "task_artifact_folder", lambda tid: tmp_path / f"task_{tid}")
 
-        dispatcher.run_cc_docker("do something", model="haiku")
+        dispatcher.run_cc_docker("do something", task_id=1, model="haiku")
 
         cmd = mock_run.call_args[0][0]
         model_idx = cmd.index("--model")
@@ -387,7 +388,7 @@ class TestExecuteTaskModel:
 
     def test_uses_exec_model(self, tmp_path, monkeypatch):
         tf = tmp_path / "tasks.json"
-        task = {"id": 1, "status": "in_progress", "prompt": "test",
+        task = {"id": 1, "status": "executing", "prompt": "test",
                 "plan_model": "sonnet", "exec_model": "opus",
                 "plan": "the plan", "priority": "medium"}
         write_tasks(tf, {"tasks": [task]})
@@ -407,7 +408,7 @@ class TestExecuteTaskModel:
 
     def test_falls_back_to_legacy_model(self, tmp_path, monkeypatch):
         tf = tmp_path / "tasks.json"
-        task = {"id": 1, "status": "in_progress", "prompt": "test",
+        task = {"id": 1, "status": "executing", "prompt": "test",
                 "model": "opus", "plan": "the plan", "priority": "medium"}
         write_tasks(tf, {"tasks": [task]})
         monkeypatch.setattr(task_store, "TASKS_FILE", tf)
@@ -780,7 +781,7 @@ class TestExecuteTaskRollupIntegration:
         }
         child_task = {
             "id": 2,
-            "status": "in_progress",
+            "status": "executing",
             "prompt": "child task",
             "plan": '{"decision":"execute","plan":"do it"}',
             "parent": 1,
@@ -829,9 +830,9 @@ class TestExecuteTaskRollupIntegration:
         data = json.loads(tf.read_text())
         task_map = {t["id"]: t for t in data["tasks"]}
 
-        # 1. Child task #2 reached push_review after execution
-        assert task_map[2]["status"] == "push_review", (
-            f"Expected child #2 status 'push_review', got '{task_map[2]['status']}'"
+        # 1. Child task #2 completed after execution
+        assert task_map[2]["status"] == "done", (
+            f"Expected child #2 status 'done', got '{task_map[2]['status']}'"
         )
 
         # 2. Parent task #1 has report set (rollup fired)
@@ -860,7 +861,7 @@ class TestMaterializeDocumentArtifacts:
     ):
         """Inline document artifact: content written to file, path set, content removed."""
         self._setup(tmp_path, monkeypatch, [
-            {"id": 1, "status": "in_progress", "prompt": "doc task", "parent": None},
+            {"id": 1, "status": "executing", "prompt": "doc task", "parent": None},
         ])
         result = {"summary": "done", "artifacts": [
             {"type": "document", "content": "long content here"}
@@ -881,7 +882,7 @@ class TestMaterializeDocumentArtifacts:
     def test_materialize_skips_already_path_based(self, tmp_path, monkeypatch):
         """Artifact that already has 'path' set must not be modified."""
         self._setup(tmp_path, monkeypatch, [
-            {"id": 1, "status": "in_progress", "prompt": "doc task", "parent": None},
+            {"id": 1, "status": "executing", "prompt": "doc task", "parent": None},
         ])
         original = {"type": "document", "path": "some/existing/path.md", "title": "Existing"}
         result = {"summary": "done", "artifacts": [dict(original)]}
@@ -891,7 +892,7 @@ class TestMaterializeDocumentArtifacts:
     def test_materialize_skips_non_document_types(self, tmp_path, monkeypatch):
         """text and git_commit artifacts must not be touched."""
         self._setup(tmp_path, monkeypatch, [
-            {"id": 1, "status": "in_progress", "prompt": "task", "parent": None},
+            {"id": 1, "status": "executing", "prompt": "task", "parent": None},
         ])
         artifacts = [
             {"type": "text", "content": "short text"},

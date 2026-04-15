@@ -6,9 +6,9 @@ Requires=docker.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/ClaudeXingCode
-EnvironmentFile=/root/ClaudeXingCode/agent/.env
-ExecStart=/root/ClaudeXingCode/.venv/bin/python3 /root/ClaudeXingCode/agent/dispatcher/dispatcher.py
+WorkingDirectory=/root/workspace/ClaudeXingCode
+EnvironmentFile=/root/workspace/ClaudeXingCode/agent/.env
+ExecStart=/root/workspace/ClaudeXingCode/.venv/bin/python3 /root/workspace/ClaudeXingCode/agent/dispatcher/dispatcher.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

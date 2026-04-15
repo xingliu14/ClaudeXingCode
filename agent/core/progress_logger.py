@@ -43,8 +43,6 @@ ACTION_STAGE = {
     "stopped": "STOPPED",
     "cancelled by user": "STOPPED",
     "completed": "DONE",
-    "push approved": "DONE",
-    "push skipped": "DONE",
     "deleted": "DELETED",
     "plan auto-approved: decomposed": "DECOMPOSED",
 }

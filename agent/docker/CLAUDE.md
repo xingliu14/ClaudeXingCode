@@ -6,27 +6,25 @@ task and produce a clean, verifiable result.
 
 ## Non-Negotiable Rules
 
-**Never push.** Do not run `git push`. Every push goes through the Web UI
-push-review gate; the dispatcher handles it after you finish.
+**Push only when the task warrants it.** If a task produces a git commit in a
+project repo that should be shared (e.g. a feature, fix, or research artifact),
+run `git push` yourself before finishing. If the output is a local artifact only
+(text, document, draft), skip the push. Use your judgment.
 
 **New repos: use `gh repo create`.** If a task requires creating a new GitHub
 repository, use `gh repo create --source=. --push` rather than `git remote add` +
-`git push`. The dispatcher will handle subsequent pushes via the push-review gate.
+`git push`.
 
-**Never commit.** Do not run `git commit` or `git add`. The dispatcher
-auto-commits after your session ends. Committing yourself creates a double-commit.
+**Commit inside project repos.** For any repo under `/workspace/`, commit your
+changes yourself before finishing. Use clear commit messages describing what the
+task did.
 
-**Never modify ClaudeXingCode system files.** The ClaudeXingCode repo at
-`/workspace/ClaudeXingCode/` is the orchestration system, not a project to
-work on. Never touch files under `ClaudeXingCode/agent/`, `ClaudeXingCode/DESIGN.md`,
-any `CLAUDE.md`, or other system files.
+**Output files go in `/task_output/`.** Any files you create that are not part
+of a project repo (stories, research, notes, documents) must be written to
+`/task_output/`, not anywhere else.
 
-**Output files go in `ClaudeXingCode/agent_log/`.** Any files you create
-(stories, research, code artifacts, notes) must be written under
-`ClaudeXingCode/agent_log/`, never in arbitrary locations.
-
-**One task, no history.** Work on the single task given. Do not read previous
-task outputs or prior summaries unless explicitly part of the task prompt.
+**One task, no history.** Work only on the single task given. Do not search for
+or read previous task outputs.
 
 ## Safety Rules
 
@@ -46,31 +44,18 @@ When your work is complete, output this JSON as the **last thing you print**:
 }
 ```
 
-`artifacts` is a list of zero or more typed artifact objects.
-See **DESIGN.md → Task Result Format** for artifact types, JSON schemas, and
-guidance on which type to use for each kind of task.
+`artifacts` is a list of zero or more typed artifact objects (git_commit, text,
+document, code_diff, url_list). For creative or text tasks (poems, stories, etc.),
+the content MUST go in a `text` artifact — never in summary.
 
 ## Workspace Layout
 
-You start in `/workspace/`, which contains multiple repos:
-
 ```
-/workspace/
-  ClaudeXingCode/     ← orchestration system (do not modify)
-  some-project/       ← a project repo you may be asked to work on
-  another-project/    ← another project repo
+/workspace/          ← project repos (writable)
+  some-project/
+  another-project/
+/task_output/        ← write your output files here
 ```
 
 Work on the repo the task specifies. If a repo isn't there yet, clone it:
 `git clone <url> /workspace/<name>/`
-
-## Artifact File Conventions
-
-Each task has its own folder under `ClaudeXingCode/agent_log/tasks/`:
-
-- Root task N: `ClaudeXingCode/agent_log/tasks/task_N/`
-- Subtask N of parent P: `ClaudeXingCode/agent_log/tasks/task_P/task_N/`
-
-Always write `result.md` in the task folder. Additional artifact files live
-alongside it with descriptive names (e.g. `research.md`, `schema.sql`).
-All paths in artifact references are relative to `/workspace/`.

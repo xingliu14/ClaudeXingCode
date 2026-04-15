@@ -284,7 +284,7 @@ class TestAutoApproveDecompose:
             stderr="",
         ))
 
-    def test_auto_approve_execute_sets_in_progress(self, tmp_path, monkeypatch):
+    def test_auto_approve_execute_sets_executing(self, tmp_path, monkeypatch):
         tf = tmp_path / "tasks.json"
         task = {"id": 1, "status": "pending", "prompt": "test",
                 "plan_model": "sonnet", "exec_model": "sonnet",
@@ -297,7 +297,7 @@ class TestAutoApproveDecompose:
         dispatcher.plan_task(task)
 
         t = json.loads(tf.read_text())["tasks"][0]
-        assert t["status"] == "in_progress"
+        assert t["status"] == "executing"
 
     def test_auto_approve_decompose_sets_decomposed(self, tmp_path, monkeypatch):
         tf = tmp_path / "tasks.json"

@@ -11,8 +11,6 @@ Routes:
   POST /tasks/<id>/reject        - reject plan with feedback
   POST /tasks/<id>/cancel        - cancel in-progress task -> stopped
   POST /tasks/<id>/retry         - requeue stopped/done task -> pending
-  POST /tasks/<id>/approve-push  - approve push -> dispatcher pushes -> done (with pushed_at)
-  POST /tasks/<id>/reject-push   - reject push -> done (local commit only)
   GET  /progress                 - view PROGRESS.md
   GET  /log                      - view recent git log
   GET  /status                   - dispatcher status (JSON)
@@ -20,6 +18,7 @@ Routes:
 
 import json
 import os
+import shutil
 import sys
 import subprocess
 from datetime import datetime, timezone
@@ -149,9 +148,9 @@ SHARED_CSS = """
     .state-badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px;
                    font-size: 0.75rem; font-weight: 600; }
     .state-pending      { background: #e0e7ff; color: #3730a3; }
-    .state-in_progress  { background: #dbeafe; color: #1d4ed8; }
+    .state-planning     { background: #bfdbfe; color: #1d4ed8; }
+    .state-executing    { background: #dbeafe; color: #1e40af; }
     .state-plan_review  { background: #fef3c7; color: #92400e; }
-    .state-push_review  { background: #fef3c7; color: #92400e; }
     .state-done         { background: #dcfce7; color: #166534; }
     .state-stopped      { background: #fee2e2; color: #991b1b; }
     .state-decomposed   { background: #f3e8ff; color: #6b21a8; }
@@ -206,9 +205,9 @@ BOARD_HTML = """
     .col { background: #fff; border-radius: 8px; min-width: 180px; flex: 1;
            padding: 0.6rem; border-top: 3px solid #e5e7eb; }
     .col-pending     { border-top-color: #818cf8; }
-    .col-in_progress { border-top-color: #3b82f6; }
+    .col-planning    { border-top-color: #60a5fa; }
+    .col-executing   { border-top-color: #3b82f6; }
     .col-plan_review { border-top-color: #f59e0b; }
-    .col-push_review { border-top-color: #f59e0b; }
     .col-done        { border-top-color: #22c55e; }
     .col-stopped     { border-top-color: #ef4444; }
     .col-decomposed  { border-top-color: #a855f7; }
@@ -252,8 +251,8 @@ BOARD_HTML = """
     .col-done.col-collapsed h2::after { content: ' ▸'; }
     .col-done.col-collapsed > :not(h2) { display: none; }
     /* Human-attention: review columns */
-    .col-plan_review, .col-push_review { background: #fffbeb; }
-    .col-plan_review h2, .col-push_review h2 { color: #92400e; }
+    .col-plan_review { background: #fffbeb; }
+    .col-plan_review h2 { color: #92400e; }
     .card-review { border-color: #f59e0b !important; background: #fffbeb !important; }
     .btn-review { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px;
                   background: #f59e0b; color: #fff; font-size: 0.7rem; font-weight: 700;
@@ -283,9 +282,17 @@ BOARD_HTML = """
       <option value="low">Low</option>
     </select>
   </label>
-  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem" title="Applies to both plan and execution phases. Change them independently on the task detail page.">
-    Model (plan &amp; exec):
-    <select name="model">
+  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem">
+    Plan:
+    <select name="plan_model">
+      <option value="sonnet">Sonnet</option>
+      <option value="opus">Opus</option>
+      <option value="haiku">Haiku</option>
+    </select>
+  </label>
+  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem">
+    Exec:
+    <select name="exec_model">
       <option value="sonnet">Sonnet</option>
       <option value="opus">Opus</option>
       <option value="haiku">Haiku</option>
@@ -416,7 +423,7 @@ BOARD_HTML = """
     if (t.blocked_on && t.blocked_on.length) meta += '<span class="badge badge-blocked">blocked ' + t.blocked_on.length + '</span>';
     if (t.pushed_at) meta += '<span class="pushed-tag">pushed</span>';
     if (t.stop_reason) meta += '<span class="reason-tag">' + esc(t.stop_reason) + '</span>';
-    if (t.status === 'in_progress' && t.started_at) {
+    if ((t.status === 'planning' || t.status === 'executing') && t.started_at) {
       const elapsed = Math.round((Date.now() - Date.parse(t.started_at)) / 1000);
       const m = Math.floor(elapsed / 60);
       const s = elapsed % 60;
@@ -426,7 +433,7 @@ BOARD_HTML = """
       ? '<form method="post" action="/tasks/' + t.id + '/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>'
       : '<form method="post" action="/tasks/' + t.id + '/hide" style="margin:0"><button class="btn-hide">hide</button></form>';
     meta += hideAction;
-    const isReview = t.status === 'plan_review' || t.status === 'push_review';
+    const isReview = t.status === 'plan_review';
     if (isReview) meta += '<a href="/tasks/' + t.id + '" class="btn-review">Review \u2192</a>';
     const cardCls = 'card' + cls + (isReview ? ' card-review' : '');
     return '<div class="' + cardCls + '"><a href="/tasks/' + t.id + '">#' + t.id + ' ' + label + '</a><div class="meta">' + meta + '</div></div>';
@@ -491,9 +498,9 @@ BOARD_HTML = """
       el.innerHTML = '<span class="status-dot status-' + dot + '"></span><span style="color:#ccc;font-size:0.8rem">' + esc(label) + '</span>';
     }
 
-    // Review badge: ⚑ N when plan_review or push_review tasks exist
+    // Review badge: ⚑ N when plan_review tasks exist
     const reviewEl = document.getElementById('review-badge');
-    const reviewTasks = data.tasks.filter(t => t.status === 'plan_review' || t.status === 'push_review');
+    const reviewTasks = data.tasks.filter(t => t.status === 'plan_review');
     if (reviewEl) {
       const n = reviewTasks.length;
       reviewEl.textContent = n > 0 ? '\u2691 ' + n : '';
@@ -505,7 +512,7 @@ BOARD_HTML = """
     if (banner) {
       if (reviewTasks.length > 0) {
         const first = reviewTasks[0];
-        const label = first.status === 'push_review' ? 'push' : 'plan';
+        const label = 'plan';
         banner.innerHTML = '\u2691 Action Required \u2014 ' + reviewTasks.length + ' task' + (reviewTasks.length > 1 ? 's' : '') +
           ' need' + (reviewTasks.length === 1 ? 's' : '') + ' your review &mdash; ' +
           '<a href="/tasks/' + first.id + '">Review #' + first.id + ' (' + label + ') &rarr;</a>';
@@ -709,18 +716,8 @@ DETAIL_HTML = """
       </div>
       {% endif %}
 
-      {# Push review: approve push / reject push #}
-      {% if task.status == 'push_review' %}
-      <form method="post" action="/tasks/{{ task.id }}/approve-push">
-        <button class="btn btn-approve">Approve Push</button>
-      </form>
-      <form method="post" action="/tasks/{{ task.id }}/reject-push">
-        <button class="btn btn-reject">Skip Push (keep local)</button>
-      </form>
-      {% endif %}
-
-      {# Cancel: only for in_progress or plan_review #}
-      {% if task.status in ('in_progress', 'plan_review') %}
+      {# Cancel: only for active or review states #}
+      {% if task.status in ('planning', 'executing', 'plan_review') %}
       <form method="post" action="/tasks/{{ task.id }}/cancel" onsubmit="return confirm('Cancel this task?')">
         <button class="btn btn-cancel btn-sm">Cancel</button>
       </form>
@@ -893,7 +890,7 @@ DETAIL_HTML = """
         {% set _blocked = s.get('blocked_on') and s.blocked_on|length > 0 %}
         {% if _blocked %}
           {% set _icon = '⊟' %}{% set _cls = 'blocked' %}
-        {% elif s.status == 'done' or s.status == 'push_review' %}
+        {% elif s.status == 'done' %}
           {% set _icon = '✓' %}{% set _cls = 'done' %}
         {% elif s.status == 'in_progress' %}
           {% set _icon = '⟳' %}{% set _cls = 'running' %}
@@ -986,7 +983,7 @@ DETAIL_HTML = """
       // Review badge
       const reviewEl = document.getElementById('review-badge');
       if (reviewEl) {
-        const n = data.tasks.filter(t => t.status === 'plan_review' || t.status === 'push_review').length;
+        const n = data.tasks.filter(t => t.status === 'plan_review').length;
         reviewEl.textContent = n > 0 ? '\u2691 ' + n : '';
         reviewEl.style.display = n > 0 ? 'inline-block' : 'none';
       }
@@ -1082,11 +1079,11 @@ def _read_dispatcher_status() -> dict:
 # Pipeline columns: (status, label, icon)
 # Icons mark human-gated states that need your action
 PIPELINE_COLS = [
-    ("pending",      "Pending",    ""),
-    ("in_progress",  "Running",    ""),
+    ("pending",      "Pending",     ""),
+    ("planning",     "Planning",    ""),
     ("plan_review",  "Review Plan", "\u270b"),
-    ("push_review",  "Review Push", "\u270b"),
-    ("done",         "Done",       ""),
+    ("executing",    "Executing",   ""),
+    ("done",         "Done",        ""),
 ]
 
 
@@ -1171,12 +1168,15 @@ def add_task():
     title = request.form.get("title", "").strip()
     prompt = request.form.get("prompt", "").strip()
     priority = request.form.get("priority", "medium")
-    model = request.form.get("model", "sonnet")
+    plan_model = request.form.get("plan_model", "sonnet")
+    exec_model = request.form.get("exec_model", "sonnet")
     auto_approve = request.form.get("auto_approve") == "1"
     if priority not in ("high", "medium", "low"):
         priority = "medium"
-    if model not in ("sonnet", "opus", "haiku"):
-        model = "sonnet"
+    if plan_model not in ("sonnet", "opus", "haiku"):
+        plan_model = "sonnet"
+    if exec_model not in ("sonnet", "opus", "haiku"):
+        exec_model = "sonnet"
     if not title:
         return redirect(url_for("board"))
     if not prompt:
@@ -1192,8 +1192,8 @@ def add_task():
             "title": title,
             "prompt": prompt,
             "priority": priority,
-            "plan_model": model,
-            "exec_model": model,
+            "plan_model": plan_model,
+            "exec_model": exec_model,
             "auto_approve": auto_approve,
             "account": acc,
             "parent": None,
@@ -1353,13 +1353,16 @@ def delete_task(task_id: int):
     locked_update(mutate)
     if deleted:
         log_progress(task_id, "deleted")
+        artifact_dir = WORKSPACE / "agent_log" / "tasks" / f"task_{task_id}"
+        if artifact_dir.exists():
+            shutil.rmtree(artifact_dir)
     return redirect(url_for("board"))
 
 
 @app.post("/tasks/<int:task_id>/approve")
 def approve_task(task_id: int):
     """Approve a plan that's in review. Two outcomes:
-    - 'execute' decision: set task back to in_progress (dispatcher picks it up for Docker execution)
+    - 'execute' decision: set task to 'executing' (dispatcher picks it up for Docker execution)
     - 'decompose' decision: create subtasks, set parent to 'decomposed'
     NOTE: The decompose logic here mirrors dispatcher._approve_decompose — keep in sync.
     """
@@ -1426,7 +1429,7 @@ def approve_task(task_id: int):
             task["children"] = abs_ids
             task["unresolved_children"] = n
         else:
-            task["status"] = "in_progress"
+            task["status"] = "executing"
 
     locked_update(mutate)
     log_progress(task_id, "plan approved")
@@ -1464,7 +1467,7 @@ def reject_task(task_id: int):
 
 @app.post("/tasks/<int:task_id>/cancel")
 def cancel_task(task_id: int):
-    """Stop an active task. Only applies to in_progress or plan_review — the
+    """Stop an active task. Only applies to planning, executing, or plan_review — the
     dispatcher may be mid-execution when this fires, but the status change
     prevents it from being picked up again on the next iteration."""
     _, err = _check_owner(task_id)
@@ -1472,7 +1475,7 @@ def cancel_task(task_id: int):
         return err
     def mutate(data):
         for t in data["tasks"]:
-            if t["id"] == task_id and t["status"] in ("in_progress", "plan_review"):
+            if t["id"] == task_id and t["status"] in ("planning", "executing", "plan_review"):
                 t["status"] = "stopped"
                 t["stop_reason"] = "cancelled"
                 t["summary"] = (t.get("summary") or "") + "\nCancelled by user via Web UI."
@@ -1512,38 +1515,6 @@ def retry_task(task_id: int):
     log_progress(task_id, "requeued (retry)")
     return redirect(url_for("task_detail", task_id=task_id))
 
-
-@app.post("/tasks/<int:task_id>/approve-push")
-def approve_push(task_id: int):
-    _, err = _check_owner(task_id)
-    if err:
-        return err
-    def mutate(data):
-        for t in data["tasks"]:
-            if t["id"] == task_id and t["status"] == "push_review":
-                t["push_approved"] = True
-                break
-
-    locked_update(mutate)
-    log_progress(task_id, "push approved")
-    return redirect(url_for("task_detail", task_id=task_id))
-
-
-@app.post("/tasks/<int:task_id>/reject-push")
-def reject_push(task_id: int):
-    _, err = _check_owner(task_id)
-    if err:
-        return err
-    def mutate(data):
-        for t in data["tasks"]:
-            if t["id"] == task_id and t["status"] == "push_review":
-                t["status"] = "done"
-                t["summary"] = (t.get("summary") or "") + "\nPush skipped by user (local commit only)."
-                break
-
-    locked_update(mutate)
-    log_progress(task_id, "push skipped", "local commit only")
-    return redirect(url_for("task_detail", task_id=task_id))
 
 
 @app.post("/tasks/<int:task_id>/hide")

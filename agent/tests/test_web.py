@@ -20,7 +20,10 @@ def web_client(tmp_path, monkeypatch):
     monkeypatch.setattr(task_store, "TASKS_FILE", tf)
     monkeypatch.setattr(web_manager, "STATUS_FILE", tmp_path / "status.json")
     web_manager.app.config["TESTING"] = True
+    web_manager.app.config["SECRET_KEY"] = "test-secret"
     with web_manager.app.test_client() as client:
+        with client.session_transaction() as sess:
+            sess["account"] = "personal"
         yield client, tf
 
 
@@ -60,7 +63,7 @@ class TestAddTaskRoute:
 
     def test_creates_task(self, web_client):
         client, tf = web_client
-        resp = client.post("/tasks", data={"prompt": "Fix the bug", "priority": "high"})
+        resp = client.post("/tasks", data={"title": "Fix the bug", "prompt": "Fix the bug", "priority": "high"})
         assert resp.status_code == 302
 
         data = json.loads(tf.read_text())
@@ -75,7 +78,7 @@ class TestAddTaskRoute:
 
     def test_creates_task_full_schema(self, web_client):
         client, tf = web_client
-        client.post("/tasks", data={"prompt": "Schema test", "priority": "medium"})
+        client.post("/tasks", data={"title": "Schema test", "prompt": "Schema test", "priority": "medium"})
 
         task = json.loads(tf.read_text())["tasks"][0]
         assert task["depth"] == 0
@@ -89,7 +92,7 @@ class TestAddTaskRoute:
 
     def test_creates_task_with_model(self, web_client):
         client, tf = web_client
-        resp = client.post("/tasks", data={"prompt": "Think hard", "priority": "high", "model": "opus"})
+        resp = client.post("/tasks", data={"title": "Think hard", "prompt": "Think hard", "priority": "high", "plan_model": "opus", "exec_model": "opus"})
         assert resp.status_code == 302
 
         task = json.loads(tf.read_text())["tasks"][0]
@@ -98,7 +101,7 @@ class TestAddTaskRoute:
 
     def test_invalid_model_defaults_to_sonnet(self, web_client):
         client, tf = web_client
-        resp = client.post("/tasks", data={"prompt": "Test", "priority": "medium", "model": "gpt4"})
+        resp = client.post("/tasks", data={"title": "Test", "prompt": "Test", "priority": "medium", "model": "gpt4"})
         assert resp.status_code == 302
 
         task = json.loads(tf.read_text())["tasks"][0]
@@ -167,7 +170,7 @@ class TestApproveRoute:
                                     "priority": "medium"}]})
         resp = client.post("/tasks/1/approve")
         assert resp.status_code == 302
-        assert json.loads(tf.read_text())["tasks"][0]["status"] == "in_progress"
+        assert json.loads(tf.read_text())["tasks"][0]["status"] == "executing"
 
     def test_does_not_approve_non_plan_review(self, web_client):
         client, tf = web_client
@@ -185,7 +188,7 @@ class TestApproveRoute:
         client.post("/tasks/1/approve")
 
         result = json.loads(tf.read_text())
-        assert result["tasks"][0]["status"] == "in_progress"
+        assert result["tasks"][0]["status"] == "executing"
         assert len(result["tasks"]) == 1  # no subtasks created
 
     def test_approve_decompose_sets_parent_decomposed(self, web_client):
@@ -319,7 +322,7 @@ class TestCancelRoute:
 
     def test_cancels_in_progress(self, web_client):
         client, tf = web_client
-        write_tasks(tf, {"tasks": [{"id": 1, "status": "in_progress", "prompt": "x",
+        write_tasks(tf, {"tasks": [{"id": 1, "status": "executing", "prompt": "x",
                                     "priority": "medium"}]})
         resp = client.post("/tasks/1/cancel")
         assert resp.status_code == 302

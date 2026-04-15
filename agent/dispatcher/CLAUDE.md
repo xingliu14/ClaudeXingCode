@@ -6,14 +6,13 @@ The web UI only reads state (for display) and writes user decisions (approve/rej
 ## Scheduling order
 
 `pick_actionable_task` checks in priority order:
-1. `push_review` + `push_approved=True` → `do_push_task` (git push, then `done`)
-2. `in_progress` + `plan` set → `execute_task` (Docker)
-3. `pending` (not blocked) → `plan_task` (local, read-only)
+1. `executing` → `execute_task` (Docker)
+2. `pending` (not blocked) → `plan_task` (local, read-only)
 
 ## Phase separation
 
-- **Plan phase** (`run_cc_local`): `--permission-mode plan`, read-only. On token limit → reset to `pending`.
-- **Execute phase** (`run_cc_docker`): `--dangerously-skip-permissions`, sandboxed. On token limit → keep `in_progress` (preserves approved plan).
+- **Plan phase** (`run_cc_local`): status `planning`, `--permission-mode plan`, read-only. On token limit → reset to `pending`.
+- **Execute phase** (`run_cc_docker`): status `executing`, `--dangerously-skip-permissions`, sandboxed. On token limit → keep `executing` (preserves approved plan).
 
 ## Key env vars
 

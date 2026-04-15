@@ -6,7 +6,7 @@ with the dispatcher; all mutations go through `locked_update()`.
 ## What the web process owns
 
 - Rendering state for the human (board, detail, log, progress)
-- User decisions: approve plan, reject plan, cancel, retry, approve/reject push
+- User decisions: approve plan, reject plan, cancel, retry
 - Adding new tasks (`POST /tasks`)
 
 ## What the web process does NOT own
@@ -17,8 +17,8 @@ with the dispatcher; all mutations go through `locked_update()`.
 ## AJAX polling
 
 The board page polls `/tasks` (JSON) every 3s and diffs the DOM in-place.
-The `push_review` and `plan_review` columns have an amber highlight; the nav badge
-shows the count of tasks needing human attention.
+The `plan_review` column has an amber highlight; the nav badge shows the count
+of tasks needing human attention.
 
 ## Key template notes
 

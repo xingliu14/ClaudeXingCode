@@ -106,8 +106,8 @@ def pick_next_task(tasks: list) -> dict | None:
 
 
 def pick_approved_task(tasks: list) -> dict | None:
-    """Find a task that was approved (in_progress) but never executed (has a plan)."""
-    approved = [t for t in tasks if t["status"] == "in_progress" and t.get("plan")]
+    """Find a task that was approved (executing) and ready for Docker execution."""
+    approved = [t for t in tasks if t["status"] == "executing"]
     if not approved:
         return None
     return sorted(approved, key=_priority_key)[0]
@@ -240,16 +240,12 @@ def build_plan_prompt(prompt: str, rejection_comments: list | None = None) -> st
 
 def build_task_prompt(prompt: str, plan_text: str | None = None, task_id: int | None = None) -> str:
     """Wrap the user prompt with isolation instructions. Injects approved plan if provided."""
-    if task_id is not None:
-        artifact_dir = f"agent_log/tasks/task_{task_id}"
-    else:
-        artifact_dir = "agent_log"
     parts = [
         "You are working on a SINGLE, INDEPENDENT task. "
         "Do NOT reference, read, or build upon any previous tasks, task history, "
         "PROGRESS.md entries, or prior task outputs. Treat this as a completely fresh request.\n\n"
-        f"If you create any output files (stories, research docs, text, etc.), save them in "
-        f"`{artifact_dir}/`, NOT in the project root or `agent_log/` directly.\n\n"
+        "If you create any output files (stories, research docs, text, etc.), save them in "
+        "`/task_output/`, NOT anywhere else.\n\n"
         "RESULT FORMAT: When done, print a JSON object as the very last thing:\n"
         '{"summary": "<one sentence describing what was done>", "artifacts": [...]}\n'
         "For creative or text tasks (poems, stories, haiku, etc.), the actual content MUST be "
@@ -373,15 +369,18 @@ def run_cc_local(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     return result.returncode, parse_stream_json(raw)
 
 
-def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
+def run_cc_docker(prompt: str, task_id: int, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     """
     Run Claude Code inside a Docker container for sandboxed execution.
+
+    Isolation: ClaudeXingCode/ is hidden inside the container via tmpfs so the
+    agent cannot read other tasks' logs or system files. The current task's
+    artifact folder is mounted at /task_output/ (writable).
+
     Auth priority:
       1. CLAUDE_CODE_OAUTH_TOKEN env var — no file mounts needed
       2. ANTHROPIC_API_KEY env var — no file mounts needed
       3. Credential files — mounts ~/.claude and ~/.claude.json read-only
-    Caller is responsible for building the complete prompt.
-    Returns (returncode, human-readable output text).
     """
     model_id = MODEL_MAP.get(model, MODEL_MAP[DEFAULT_MODEL])
     cc_cmd = [
@@ -392,13 +391,27 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     ]
 
     # Auth priority: OAuth token > API key > credential file mounts.
-    # Tokens are passed as env vars to Docker (-e), which means they're visible
-    # in `ps` output. Acceptable for a personal Mac setup; a production system
-    # should use Docker secrets or --env-file.
     oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
-    docker_cmd = ["docker", "run", "--rm", "-v", f"{DOCKER_MOUNT}:/workspace"]
+    # Run as the 'agent' user (uid=1000, defined in Dockerfile).
+    # The workspace on VPS must be owned by uid=1000 so the container can write to it.
+    # HOME is set explicitly so CC finds the baked-in CLAUDE.md at /home/agent/.claude/CLAUDE.md.
+    docker_cmd = [
+        "docker", "run", "--rm",
+        "-e", "HOME=/home/agent",
+        "-v", f"{DOCKER_MOUNT}:/workspace",
+        # Hide ClaudeXingCode/ so the agent cannot read other tasks' logs or
+        # system files. tmpfs overlays the bind-mount at this path.
+        "--tmpfs", f"/workspace/{WORKSPACE_REL}:rw,size=64m",
+    ]
+
+    # Mount the current task's artifact folder at /task_output/ (writable).
+    task_folder = task_artifact_folder(task_id)
+    task_folder.mkdir(parents=True, exist_ok=True)
+    # Ensure the artifact folder is writable by the agent user (uid=1000) inside Docker.
+    os.chown(task_folder, 1000, 1000)
+    docker_cmd += ["-v", f"{task_folder}:/task_output"]
 
     if oauth_token:
         docker_cmd += ["-e", f"CLAUDE_CODE_OAUTH_TOKEN={oauth_token}"]
@@ -414,15 +427,12 @@ def run_cc_docker(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
         print("[dispatcher] Docker auth: credential file mounts", flush=True)
 
     # GitHub CLI auth + git author identity — forwarded when present, noop if absent.
-    # Required for the push-review flow: `gh auth status` and `git push` inside the container.
     for env_var in ("GH_TOKEN", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
                     "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
         val = os.environ.get(env_var, "")
         if val:
             docker_cmd += ["-e", f"{env_var}={val}"]
 
-    # Start CC at the mount root so it can see all repos under /workspace/.
-    # ClaudeXingCode (and its agent_log/) is at /workspace/WORKSPACE_REL.
     docker_cmd += ["-w", "/workspace", DOCKER_IMAGE] + cc_cmd
 
     print(f"[dispatcher] Running CC in Docker ({DOCKER_IMAGE})...", flush=True)
@@ -490,28 +500,15 @@ def git_commit(message: str) -> bool:
     return True
 
 
-def git_push() -> bool:
-    """Push the current branch to origin. Returns True on success."""
-    result = subprocess.run(
-        ["git", "push"],
-        cwd=WORKSPACE,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print(f"[dispatcher] git push failed: {result.stderr[:200]}", flush=True)
-        return False
-    return True
 
 
 def task_artifact_folder(task_id: int) -> Path:
     """Return the artifact folder path for a task, creating nested structure for subtasks.
 
-    Root task N       → <WORKSPACE>/agent_log/tasks/<account>/task_N/
+    Root task N       → <WORKSPACE>/agent_log/tasks/task_N/
     Subtask N (parent P, grandparent G, ...)
-                      → <WORKSPACE>/agent_log/tasks/<account>/task_G/.../task_P/task_N/
+                      → <WORKSPACE>/agent_log/tasks/task_G/.../task_P/task_N/
 
-    Account is read from the root task's 'account' field (default: 'personal').
     Walks the parent chain by loading tasks.json so the full ancestry is available.
     The folder is NOT created here — callers must mkdir as needed."""
     data = load_tasks()
@@ -525,13 +522,9 @@ def task_artifact_folder(task_id: int) -> Path:
         t = task_map.get(current_id)
         current_id = t.get("parent") if t else None
 
-    # Root task (last in chain) carries the account label
-    root_task = task_map.get(chain[-1], {})
-    account = root_task.get("account", DEFAULT_ACCOUNT)
-
     # chain is [task_id, parent_id, grandparent_id, ...] — reverse to get root-first
     chain.reverse()
-    folder = Path(WORKSPACE) / "agent_log" / "tasks" / account
+    folder = Path(WORKSPACE) / "agent_log" / "tasks"
     for tid in chain:
         folder = folder / f"task_{tid}"
     return folder
@@ -669,45 +662,16 @@ def generate_parent_report(parent_id: int) -> None:
 # Main loop
 # ---------------------------------------------------------------------------
 
-def pick_push_approved_task(tasks: list) -> dict | None:
-    """Find a push_review task whose push has been approved by the user (push_approved=True)."""
-    candidates = [t for t in tasks if t["status"] == "push_review" and t.get("push_approved")]
-    if not candidates:
-        return None
-    return min(candidates, key=_priority_key)
-
-
 def pick_actionable_task(tasks: list) -> dict | None:
-    """Pick the next task to act on: push-approved > approved-plan > pending.
+    """Pick the next task to act on: approved-plan > pending.
 
     Priority order ensures approved work (human already reviewed) is never
     starved by incoming pending tasks. This is the single scheduling entry
     point called by the main loop — all routing decisions flow from here."""
-    push_task = pick_push_approved_task(tasks)
-    if push_task:
-        return push_task
     approved = pick_approved_task(tasks)
     if approved:
         return approved
     return pick_next_task(tasks)
-
-
-def do_push_task(task: dict) -> None:
-    """Execute git push for a push_review task the user has approved, then mark it done."""
-    task_id = task["id"]
-    print(f"[dispatcher] Pushing task #{task_id}...", flush=True)
-    write_status("running", f"Pushing #{task_id}", task_id)
-    success = git_push()
-    now = datetime.now(timezone.utc).isoformat()
-    if success:
-        update_task(task_id, status="done", pushed_at=now,
-                    progress_action="pushed", progress_details="git push succeeded")
-        print(f"[dispatcher] Task #{task_id} pushed and done.", flush=True)
-    else:
-        # Reset approval flag so the task stays in push_review for user retry or rejection
-        update_task(task_id, push_approved=False,
-                    progress_action="push failed", progress_details="git push failed; awaiting retry")
-        print(f"[dispatcher] Task #{task_id} push failed; reset to push_review.", flush=True)
 
 
 def main() -> None:
@@ -733,9 +697,7 @@ def main() -> None:
         # Note: `task` is a snapshot from this iteration's load_tasks() — the web UI
         # could modify the task between here and the subprocess start, but the window
         # is small and the consequences are benign (e.g., planning a just-cancelled task).
-        if task["status"] == "push_review" and task.get("push_approved"):
-            do_push_task(task)
-        elif task["status"] == "in_progress" and task.get("plan"):
+        if task["status"] == "executing":
             execute_task(task)
         else:
             plan_task(task)
@@ -825,7 +787,7 @@ def plan_task(task: dict) -> None:
 
     plan_session_start = datetime.now(timezone.utc)
     write_status("running", f"Planning #{task_id}", task_id)
-    update_task(task_id, status="in_progress",
+    update_task(task_id, status="planning",
                 progress_action="started planning",
                 progress_details=task["prompt"][:80])
     try:
@@ -885,7 +847,7 @@ def plan_task(task: dict) -> None:
             n = len(decision.get("subtasks") or [])
             print(f"[dispatcher] Task #{task_id} plan auto-approved: decomposed into {n} subtasks.", flush=True)
         else:
-            update_task(task_id, status="in_progress", plan=plan_json,
+            update_task(task_id, status="executing", plan=plan_json,
                         progress_action="plan auto-approved")
             print(f"[dispatcher] Task #{task_id} plan auto-approved (execute).", flush=True)
     else:
@@ -952,7 +914,7 @@ def execute_task(task: dict) -> None:
 
     session_start = datetime.now(timezone.utc)
     write_status("running", f"Executing #{task_id}", task_id)
-    update_task(task_id, status="in_progress",
+    update_task(task_id, status="executing",
                 started_at=session_start.isoformat(),
                 progress_action="started execution")
     try:
@@ -966,7 +928,7 @@ def execute_task(task: dict) -> None:
         except (json.JSONDecodeError, TypeError):
             pass
         exec_prompt = build_task_prompt(task["prompt"], plan_text=plan_text, task_id=task_id)
-        exec_rc, exec_output = run_cc_docker(exec_prompt, model=exec_model)
+        exec_rc, exec_output = run_cc_docker(exec_prompt, task_id=task_id, model=exec_model)
     except subprocess.TimeoutExpired:
         update_task(task_id, status="stopped", stop_reason="timeout",
                     summary="Execution timed out",
@@ -992,12 +954,12 @@ def execute_task(task: dict) -> None:
     locked_update(_append_exec_session)
 
     if rate_limited:
-        # Keep status as in_progress with plan intact (not pending) so the approved
+        # Keep status as executing with plan intact (not pending) so the approved
         # plan is preserved. On the next iteration, pick_approved_task will route
         # directly back to execute_task, skipping the plan phase entirely.
         # Compare with plan_task's token limit handling, which resets to pending
         # because there's no approved plan to preserve.
-        update_task(task_id, status="in_progress",
+        update_task(task_id, status="executing",
                     rate_limited_at=datetime.now(timezone.utc).isoformat(),
                     progress_action="token limit hit during execution",
                     progress_details="will retry after backoff")
@@ -1025,20 +987,14 @@ def execute_task(task: dict) -> None:
     write_result_md(task_id, summary)
     # Materialize document artifacts: write content to files, store path
     _materialize_document_artifacts(result, task_id)
-    committed = git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
-    if committed:
-        final_status = "push_review"
-        progress_action = "awaiting push review"
-    else:
-        final_status = "done"
-        progress_action = "completed"
-    update_task(task_id, status=final_status, completed_at=now, result=result,
-                progress_action=progress_action,
+    git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
+    update_task(task_id, status="done", completed_at=now, result=result,
+                progress_action="completed",
                 progress_details=summary or "")
     parent_id = on_task_complete(task_id)
     if parent_id is not None:
         generate_parent_report(parent_id)
-    print(f"[dispatcher] Task #{task_id} complete — awaiting push review.", flush=True)
+    print(f"[dispatcher] Task #{task_id} complete.", flush=True)
 
 
 if __name__ == "__main__":

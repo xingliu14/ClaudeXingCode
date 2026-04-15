@@ -59,13 +59,17 @@ Check IMPLEMENTATION.md, find the next small task to work on. Implement the feat
 to make sure it's working properly. Then update IMPLEMENTATION.md and report what you did to
 the human.
 
+## Test Discipline
+
+All tests must pass after every change — update affected tests in the same change, never leave the suite red.
+
 ## Common Commands
 
-**Pull personal task results from VPS to local** (`vps-backup/`):
+**Pull personal task results from VPS to local** (overwrites `tasks.json` and `agent_log/`):
 ```bash
 python3 sync-from-vps.py
 ```
-Only syncs `account="personal"` tasks. Test account stays on VPS. Run manually whenever you want a local backup.
+Only syncs `account="personal"` tasks. Test account stays on VPS. Run manually to sync latest results.
 
 **Push local code changes to VPS + restart services:**
 ```bash
