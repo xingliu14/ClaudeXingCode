@@ -19,6 +19,9 @@ repository, use `gh repo create --source=. --push` rather than `git remote add` 
 changes yourself before finishing. Use clear commit messages describing what the
 task did.
 
+**Always use `main` as the branch.** Never create or switch to `master` or any
+other branch. Work directly on `main` and push to `main`.
+
 **Output files go in `/task_output/`.** Any files you create that are not part
 of a project repo (stories, research, notes, documents) must be written to
 `/task_output/`, not anywhere else.
