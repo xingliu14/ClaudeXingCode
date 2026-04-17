@@ -11,6 +11,12 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Use Hetzner's mirror (HTTP — ca-certificates not yet installed so HTTPS can't be verified).
+RUN sed -i \
+    -e 's|http://archive.ubuntu.com/ubuntu|http://mirror.hetzner.com/ubuntu/packages|g' \
+    -e 's|http://security.ubuntu.com/ubuntu|http://mirror.hetzner.com/ubuntu/security|g' \
+    /etc/apt/sources.list
+
 # System dependencies — kept minimal for the execution sandbox
 RUN apt-get update && apt-get install -y \
     curl \
@@ -33,9 +39,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js 20 (LTS) — required by the Claude Code CLI
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+# Install via binary tarball; nodesource apt repo can conflict with Ubuntu's nodejs 12 package.
+RUN curl -fsSL https://nodejs.org/dist/v20.19.0/node-v20.19.0-linux-x64.tar.xz \
+    | tar -xJ -C /usr/local --strip-components=1
 
 # Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
