@@ -120,36 +120,64 @@ def to_pt(ts):
 # ---------------------------------------------------------------------------
 
 SHARED_CSS = """
-    body { font-family: system-ui, sans-serif; margin: 0; background: #f5f5f5; }
-    header { background: #1a1a2e; color: #fff; padding: 1rem 1.5rem; display: flex;
-             align-items: center; justify-content: space-between; }
-    header h1 { margin: 0; font-size: 1.2rem; }
-    header nav { display: flex; gap: 1rem; align-items: center; }
-    header nav a { color: #ccc; text-decoration: none; font-size: 0.85rem; }
-    header nav a:hover { color: #fff; }
-    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-                  margin-right: 0.3rem; vertical-align: middle; }
-    #review-badge { display: inline-block; background: #f59e0b; color: #fff;
-                    font-size: 0.75rem; font-weight: 700; padding: 0.15rem 0.5rem;
-                    border-radius: 4px; }
-    .status-running { background: #22c55e; }
-    .status-sleeping { background: #f59e0b; }
-    .status-idle { background: #94a3b8; }
-    a { color: #1a1a2e; }
-    .btn { padding: 0.5rem 1rem; border-radius: 6px; border: none; cursor: pointer;
-           font-size: 0.85rem; text-decoration: none; display: inline-block; }
-    .btn-approve { background: #16a34a; color: #fff; }
-    .btn-reject  { background: #dc2626; color: #fff; }
-    .btn-edit    { background: #2563eb; color: #fff; }
-    .btn-delete  { background: #7f1d1d; color: #fff; }
-    .btn-cancel  { background: #d97706; color: #fff; }
-    .btn-retry   { background: #0891b2; color: #fff; }
-    .btn-sm      { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
-    .state-badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px;
-                   font-size: 0.75rem; font-weight: 600; }
+    :root {
+      --bg: #f1f5f9;
+      --surface: #fff;
+      --surface-2: #f8fafc;
+      --border: #e2e8f0;
+      --border-hover: #cbd5e1;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --text-subtle: #94a3b8;
+      --radius-sm: 5px;
+      --radius: 8px;
+      --shadow-sm: 0 1px 2px rgba(15,23,42,.06);
+      --shadow: 0 1px 3px rgba(15,23,42,.08), 0 2px 8px rgba(15,23,42,.04);
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+           margin: 0; background: var(--bg); color: var(--text); line-height: 1.5;
+           -webkit-font-smoothing: antialiased; }
+    a { color: #4f46e5; text-decoration: none; }
+    a:hover { opacity: .85; }
+    header { background: #1a1a2e; color: #fff; padding: 0.65rem 1.25rem; display: flex;
+             align-items: center; justify-content: space-between; flex-wrap: wrap;
+             gap: 0.5rem; position: sticky; top: 0; z-index: 100;
+             box-shadow: 0 1px 0 rgba(255,255,255,.06); }
+    header h1 { margin: 0; font-size: 0.98rem; font-weight: 700; color: #f1f5f9;
+                letter-spacing: -.01em; }
+    header nav { display: flex; gap: 0.7rem; align-items: center; flex-wrap: wrap; }
+    header nav a { color: #94a3b8; text-decoration: none; font-size: 0.8rem;
+                   font-weight: 500; transition: color .15s; }
+    header nav a:hover { color: #e2e8f0; }
+    .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+                  margin-right: 0.25rem; vertical-align: middle; }
+    .status-running  { background: #22c55e; box-shadow: 0 0 0 2px rgba(34,197,94,.25); }
+    .status-sleeping { background: #f59e0b; box-shadow: 0 0 0 2px rgba(245,158,11,.25); }
+    .status-idle { background: #64748b; }
+    #review-badge { display: inline-flex; align-items: center; background: #f59e0b;
+                    color: #fff; font-size: 0.7rem; font-weight: 700;
+                    padding: 2px 8px; border-radius: 20px; }
+    .btn { display: inline-flex; align-items: center; justify-content: center;
+           height: 34px; padding: 0 14px; border-radius: var(--radius-sm); border: none;
+           cursor: pointer; font-size: 0.85rem; font-weight: 500; text-decoration: none;
+           white-space: nowrap; transition: filter .12s; font-family: inherit; }
+    .btn:hover { filter: brightness(.88); }
+    .btn:active { filter: brightness(.78); }
+    .btn-sm { height: 28px; padding: 0 10px; font-size: 0.78rem; }
+    .btn-approve   { background: #059669; color: #fff; }
+    .btn-reject    { background: #dc2626; color: #fff; }
+    .btn-edit      { background: #4f46e5; color: #fff; }
+    .btn-delete    { background: #991b1b; color: #fff; }
+    .btn-cancel    { background: #d97706; color: #fff; }
+    .btn-retry     { background: #0284c7; color: #fff; }
+    .btn-secondary { background: #e2e8f0; color: #374151; }
+    .state-badge { display: inline-flex; align-items: center; padding: 2px 9px;
+                   border-radius: 20px; font-size: 0.7rem; font-weight: 600;
+                   letter-spacing: .03em; }
     .state-pending      { background: #e0e7ff; color: #3730a3; }
-    .state-planning     { background: #bfdbfe; color: #1d4ed8; }
-    .state-executing    { background: #dbeafe; color: #1e40af; }
+    .state-planning     { background: #dbeafe; color: #1d4ed8; }
+    .state-executing    { background: #e0f2fe; color: #0369a1; }
     .state-plan_review  { background: #fef3c7; color: #92400e; }
     .state-done         { background: #dcfce7; color: #166534; }
     .state-stopped      { background: #fee2e2; color: #991b1b; }
@@ -167,10 +195,10 @@ HEADER_HTML = """
     <a href="/">Board</a>
     <a href="/progress">Progress</a>
     <a href="/log">Git Log</a>
-    <span id="review-badge"></span>
+    <span id="review-badge" style="display:none"></span>
     <span id="dispatcher-status"></span>
-    <span style="color:#888;font-size:0.8rem">{{ username }}</span>
-    <a href="/logout" style="font-size:0.8rem">Sign out</a>
+    <span style="color:#475569;font-size:0.78rem">{{ username }}</span>
+    <a href="/logout" style="color:#64748b;font-size:0.78rem">Sign out</a>
   </nav>
 </header>
 <script>
@@ -178,7 +206,7 @@ fetch('/status').then(r=>r.json()).then(d=>{
   const el=document.getElementById('dispatcher-status');
   const dot=d.state||'idle';
   const label=d.label||dot;
-  el.innerHTML='<span class="status-dot status-'+dot+'"></span><span style="color:#ccc;font-size:0.8rem">'+label+'</span>';
+  el.innerHTML='<span class="status-dot status-'+dot+'"></span><span style="color:#94a3b8;font-size:0.78rem">'+label+'</span>';
 }).catch(()=>{});
 </script>
 """
@@ -188,7 +216,7 @@ fetch('/status').then(r=>r.json()).then(d=>{
 # ---------------------------------------------------------------------------
 
 BOARD_HTML = """
-{% macro priority_select(t) %}<form method="post" action="/tasks/{{ t.id }}/set-priority" style="margin:0;display:inline"><select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-{{ t.get('priority','medium') }}" style="padding:0.1rem 0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.65rem;font-weight:600;cursor:pointer"><option value="high" {% if t.get('priority')=='high' %}selected{% endif %}>high</option><option value="medium" {% if t.get('priority','medium')=='medium' %}selected{% endif %}>medium</option><option value="low" {% if t.get('priority')=='low' %}selected{% endif %}>low</option></select></form>{% endmacro %}
+{% macro priority_select(t) %}<form method="post" action="/tasks/{{ t.id }}/set-priority" style="margin:0;display:inline"><select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-{{ t.get('priority','medium') }}"><option value="high" {% if t.get('priority')=='high' %}selected{% endif %}>high</option><option value="medium" {% if t.get('priority','medium')=='medium' %}selected{% endif %}>medium</option><option value="low" {% if t.get('priority')=='low' %}selected{% endif %}>low</option></select></form>{% endmacro %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -198,117 +226,175 @@ BOARD_HTML = """
   <title>ClaudeXingCode Dashboard</title>
   <style>
     """ + SHARED_CSS + """
-    /* --- Pipeline section --- */
-    .section-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
-                     color: #999; padding: 0.75rem 1rem 0; font-weight: 600; }
-    .pipeline { display: flex; gap: 0.75rem; padding: 0 1rem 0.5rem; overflow-x: auto; align-items: stretch; }
-    .col { background: #fff; border-radius: 8px; min-width: 180px; flex: 1;
-           padding: 0.6rem; border-top: 3px solid #e5e7eb; }
+    /* --- Board layout --- */
+    .add-card { background: var(--surface); border-bottom: 1px solid var(--border);
+                padding: 0.85rem 1rem; }
+    .add-title { font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+                 letter-spacing: .06em; color: var(--text-subtle); margin-bottom: 0.6rem; }
+    form.add { display: flex; flex-direction: column; gap: 0.45rem; }
+    form.add input[type="text"] { width: 100%; padding: 0.5rem 0.7rem;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      font-size: 0.875rem; font-family: inherit; color: var(--text);
+      background: var(--surface-2); transition: border-color .15s, box-shadow .15s; }
+    form.add textarea { width: 100%; padding: 0.5rem 0.7rem;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      font-size: 0.875rem; font-family: inherit; color: var(--text);
+      background: var(--surface-2); resize: none; overflow: hidden; min-height: 36px;
+      transition: border-color .15s, box-shadow .15s; }
+    form.add input:focus, form.add textarea:focus { outline: none;
+      border-color: #a5b4fc; box-shadow: 0 0 0 3px rgba(79,70,229,.1); }
+    .add-controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .add-label { display: flex; align-items: center; gap: 0.3rem; font-size: 0.8rem;
+                 color: var(--text-muted); white-space: nowrap; }
+    .add-label select { padding: 0.3rem 0.5rem; border: 1px solid var(--border);
+      border-radius: var(--radius-sm); font-size: 0.8rem; background: var(--surface);
+      color: var(--text); cursor: pointer; }
+    .add-label select:focus { outline: none; border-color: #a5b4fc; }
+    .add-label input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer;
+                                        accent-color: #4f46e5; }
+    .add-controls .btn { margin-left: auto; }
+    .toolbar { padding: 0.5rem 1rem; }
+    .section-label { font-size: 0.67rem; text-transform: uppercase; letter-spacing: .08em;
+                     color: var(--text-subtle); padding: 0.6rem 1rem 0.3rem; font-weight: 700; }
+    .pipeline { display: flex; gap: 10px; padding: 0 1rem 1rem; overflow-x: auto;
+                align-items: flex-start; -webkit-overflow-scrolling: touch;
+                scroll-snap-type: x proximity; }
+    .pipeline::-webkit-scrollbar { height: 4px; }
+    .pipeline::-webkit-scrollbar-track { background: transparent; }
+    .pipeline::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .col { background: var(--surface-2); border: 1px solid var(--border);
+           border-radius: var(--radius); min-width: 210px; flex: 1 1 210px;
+           max-width: 300px; padding: 10px; border-top: 3px solid var(--border);
+           scroll-snap-align: start; }
     .col-pending     { border-top-color: #818cf8; }
     .col-planning    { border-top-color: #60a5fa; }
-    .col-executing   { border-top-color: #3b82f6; }
-    .col-plan_review { border-top-color: #f59e0b; }
-    .col-done        { border-top-color: #22c55e; }
-    .col-stopped     { border-top-color: #ef4444; }
-    .col-decomposed  { border-top-color: #a855f7; }
-    .col h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;
-               color: #666; margin: 0 0 0.6rem; display: flex; align-items: center; gap: 0.4rem; }
-    .col h2 .count { font-weight: normal; color: #aaa; }
-    .col h2 .gate-icon { font-size: 0.7rem; }
-    .card { background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px;
-            padding: 0.5rem; margin-bottom: 0.4rem; font-size: 0.82rem; }
-    .card a { color: #1a1a2e; text-decoration: none; font-weight: 600; }
-    .card .meta { color: #888; font-size: 0.72rem; margin-top: 0.25rem;
-                  display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
-    .badge { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
-             font-size: 0.65rem; font-weight: 600; }
-    .badge-high { background: #fee2e2; color: #b91c1c; }
+    .col-executing   { border-top-color: #38bdf8; }
+    .col-plan_review { border-top-color: #fbbf24; }
+    .col-done        { border-top-color: #4ade80; }
+    .col-stopped     { border-top-color: #f87171; }
+    .col-decomposed  { border-top-color: #c084fc; }
+    .col h2 { font-size: 0.72rem; text-transform: uppercase; letter-spacing: .06em;
+              color: var(--text-muted); margin: 0 0 8px;
+              display: flex; align-items: center; gap: 5px; }
+    .col h2 .count { background: var(--border); color: var(--text-subtle);
+                     font-size: 0.65rem; font-weight: 700; padding: 1px 6px;
+                     border-radius: 20px; margin-left: auto; font-weight: 700; }
+    .col h2 .gate-icon { font-size: 0.75rem; }
+    .card { background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 9px 10px; margin-bottom: 6px;
+            transition: box-shadow .12s, border-color .12s; }
+    .card:hover { border-color: var(--border-hover); box-shadow: var(--shadow); }
+    .card-link { color: var(--text); text-decoration: none; font-weight: 600;
+                 display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+                 overflow: hidden; line-height: 1.4; font-size: 0.82rem; }
+    .card-link:hover { color: #4f46e5; }
+    .card .meta { color: var(--text-muted); font-size: 0.7rem; margin-top: 6px;
+                  display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .badge { display: inline-flex; align-items: center; padding: 1px 6px;
+             border-radius: 20px; font-size: 0.67rem; font-weight: 600; }
+    .badge-high   { background: #fee2e2; color: #b91c1c; }
     .badge-medium { background: #fef9c3; color: #92400e; }
-    .badge-low { background: #dcfce7; color: #166534; }
-    .badge-model { background: #e0e7ff; color: #3730a3; }
-    .badge-auto { background: #d1fae5; color: #065f46; }
+    .badge-low    { background: #dcfce7; color: #166534; }
+    .badge-model  { background: #e0e7ff; color: #4338ca; }
+    .badge-auto   { background: #d1fae5; color: #065f46; }
     .badge-blocked { background: #fde68a; color: #92400e; }
-    .reason-tag { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
-                  font-size: 0.65rem; font-weight: 600; background: #fecaca; color: #991b1b; }
-    .pushed-tag { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 4px;
-                  font-size: 0.65rem; font-weight: 600; background: #d1fae5; color: #065f46; }
-    /* --- Off-ramp row --- */
-    .offramp { display: flex; gap: 1rem; padding: 0 1rem 1rem; }
-    .offramp .col { flex: none; min-width: 250px; max-width: 350px; }
-    /* --- Add form --- */
-    form.add { padding: 0 1rem 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
-    form.add textarea { flex: 1; min-width: 200px; padding: 0.5rem; border-radius: 6px;
-                        border: 1px solid #ccc; font-size: 0.9rem; resize: none; overflow: hidden; }
-    form.add select, form.add button { padding: 0.5rem; border-radius: 6px; border: 1px solid #ccc; }
-    form.add button { background: #1a1a2e; color: #fff; border: none; cursor: pointer; }
-    .toolbar { padding: 0 1rem 0.5rem; display: flex; gap: 0.5rem; align-items: center; }
-    .btn-hide { background: none; border: 1px solid #ccc; border-radius: 4px; padding: 0.15rem 0.4rem;
-                font-size: 0.65rem; color: #888; cursor: pointer; }
-    .btn-hide:hover { background: #f0f0f0; }
-    .card.hidden-card { opacity: 0.5; }
+    .badge-elapsed { background: #dbeafe; color: #1e40af; }
+    .reason-tag { display: inline-flex; align-items: center; padding: 1px 6px;
+                  border-radius: 20px; font-size: 0.67rem; font-weight: 600;
+                  background: #fee2e2; color: #991b1b; }
+    .pushed-tag { display: inline-flex; align-items: center; padding: 1px 6px;
+                  border-radius: 20px; font-size: 0.67rem; font-weight: 600;
+                  background: #d1fae5; color: #065f46; }
+    .btn-hide { background: none; border: 1px solid var(--border); border-radius: 20px;
+                padding: 1px 7px; font-size: 0.63rem; color: var(--text-subtle);
+                cursor: pointer; white-space: nowrap; transition: background .12s;
+                font-family: inherit; }
+    .btn-hide:hover { background: var(--border); color: var(--text-muted); }
+    .card.hidden-card { opacity: 0.4; }
     .col-done h2 { cursor: pointer; user-select: none; }
-    .col-done h2::after { content: ' ▾'; font-size: 1.1rem; color: #aaa; }
+    .col-done h2::after { content: ' ▾'; color: var(--text-subtle); margin-left: 2px; }
     .col-done.col-collapsed h2::after { content: ' ▸'; }
     .col-done.col-collapsed > :not(h2) { display: none; }
-    /* Human-attention: review columns */
     .col-plan_review { background: #fffbeb; }
     .col-plan_review h2 { color: #92400e; }
-    .card-review { border-color: #f59e0b !important; background: #fffbeb !important; }
-    .btn-review { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px;
-                  background: #f59e0b; color: #fff; font-size: 0.7rem; font-weight: 700;
-                  text-decoration: none; border: none; cursor: pointer; }
-    /* Action Required banner */
-    #review-banner { display: none; margin: 0 1rem 0.75rem; padding: 0.6rem 1rem;
-                     background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px;
-                     font-size: 0.85rem; color: #92400e; font-weight: 600; }
-    #review-banner a { color: #92400e; }
-    .prio-sel-high { background: #fee2e2 !important; color: #b91c1c !important; }
-    .prio-sel-medium { background: #fef9c3 !important; color: #92400e !important; }
-    .prio-sel-low { background: #dcfce7 !important; color: #166534 !important; }
+    .card-review { border-color: #fbbf24 !important; background: #fffef5 !important; }
+    .btn-review { display: inline-flex; align-items: center; padding: 2px 8px;
+                  border-radius: 20px; background: #f59e0b; color: #fff !important;
+                  font-size: 0.67rem; font-weight: 700; white-space: nowrap; }
+    .btn-review:hover { filter: brightness(.9); opacity: 1; }
+    #review-banner { display: none; margin: 0 1rem 0.6rem; padding: 0.55rem 1rem;
+                     background: #fffbeb; border: 1px solid #fbbf24;
+                     border-radius: var(--radius); font-size: 0.85rem;
+                     color: #92400e; font-weight: 500; }
+    #review-banner a { color: #b45309; font-weight: 700; }
+    .prio-select { border-radius: 20px !important; border: 1px solid var(--border) !important;
+                   font-size: 0.65rem !important; font-weight: 600 !important;
+                   cursor: pointer; padding: 1px 5px !important;
+                   font-family: inherit; }
+    .prio-sel-high   { background: #fee2e2 !important; color: #b91c1c !important;
+                       border-color: #fca5a5 !important; }
+    .prio-sel-medium { background: #fef9c3 !important; color: #92400e !important;
+                       border-color: #fde68a !important; }
+    .prio-sel-low    { background: #dcfce7 !important; color: #166534 !important;
+                       border-color: #bbf7d0 !important; }
+    .offramp { display: flex; gap: 10px; padding: 0 1rem 1rem; flex-wrap: wrap; }
+    .offramp .col { flex: 1 1 250px; max-width: 420px; }
+    @media (max-width: 640px) {
+      .add-card { padding: 0.7rem 0.75rem; }
+      .add-controls { gap: 0.4rem; }
+      .add-label span { display: none; }
+      .add-controls .btn { margin-left: 0; }
+      .toolbar, .section-label { padding-left: 0.75rem; padding-right: 0.75rem; }
+      .pipeline { padding: 0 0.75rem 1rem; gap: 8px; }
+      .col { min-width: 195px; flex: 0 0 195px; }
+      .offramp { padding: 0 0.75rem 1rem; }
+    }
   </style>
 </head>
 <body>
 """ + HEADER_HTML + """
 
-<form class="add" method="post" action="/tasks">
-  <input type="text" name="title" placeholder="Title..." required style="flex-basis:100%;padding:0.5rem;border-radius:6px;border:1px solid #ccc;font-size:0.9rem">
-  <textarea name="prompt" rows="1" placeholder="Description (optional detail for the agent)..."
-    oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
-  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem">
-    Priority:
-    <select name="priority">
-      <option value="medium">Medium</option>
-      <option value="high">High</option>
-      <option value="low">Low</option>
-    </select>
-  </label>
-  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem">
-    Plan:
-    <select name="plan_model">
-      <option value="sonnet">Sonnet</option>
-      <option value="opus">Opus</option>
-      <option value="haiku">Haiku</option>
-    </select>
-  </label>
-  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem">
-    Exec:
-    <select name="exec_model">
-      <option value="sonnet">Sonnet</option>
-      <option value="opus">Opus</option>
-      <option value="haiku">Haiku</option>
-    </select>
-  </label>
-  <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem;cursor:pointer">
-    <input type="checkbox" name="auto_approve" value="1"> Auto-approve
-  </label>
-  <button type="submit">Add</button>
-</form>
+<div class="add-card">
+  <div class="add-title">New Task</div>
+  <form class="add" method="post" action="/tasks">
+    <input type="text" name="title" placeholder="Task title..." required>
+    <textarea name="prompt" rows="1" placeholder="Description (optional detail for the agent)..."
+      oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
+    <div class="add-controls">
+      <label class="add-label"><span>Priority</span>
+        <select name="priority">
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="low">Low</option>
+        </select>
+      </label>
+      <label class="add-label"><span>Plan</span>
+        <select name="plan_model">
+          <option value="sonnet">Sonnet</option>
+          <option value="opus">Opus</option>
+          <option value="haiku">Haiku</option>
+        </select>
+      </label>
+      <label class="add-label"><span>Exec</span>
+        <select name="exec_model">
+          <option value="sonnet">Sonnet</option>
+          <option value="opus">Opus</option>
+          <option value="haiku">Haiku</option>
+        </select>
+      </label>
+      <label class="add-label" style="cursor:pointer">
+        <input type="checkbox" name="auto_approve" value="1"> Auto
+      </label>
+      <button type="submit" class="btn btn-edit btn-sm">Add Task</button>
+    </div>
+  </form>
+</div>
 
 <div class="toolbar">
   {% if show_hidden %}
-  <a href="/" class="btn btn-sm" style="background:#e5e7eb;color:#333;font-size:0.75rem">Hide Hidden Tasks</a>
+  <a href="/" class="btn btn-sm btn-secondary">Hide Hidden</a>
   {% else %}
-  <a href="/?show_hidden=1" class="btn btn-sm" style="background:#e5e7eb;color:#333;font-size:0.75rem">Show Hidden Tasks</a>
+  <a href="/?show_hidden=1" class="btn btn-sm btn-secondary">Show Hidden</a>
   {% endif %}
 </div>
 
@@ -322,19 +408,20 @@ BOARD_HTML = """
     <h2>
       {% if col_icon %}<span class="gate-icon">{{ col_icon }}</span>{% endif %}
       {{ col_label }}
-      <span class="count">({{ tasks|selectattr('status','equalto',col_status)|list|length }})</span>
+      <span class="count">{{ tasks|selectattr('status','equalto',col_status)|list|length }}</span>
     </h2>
     {% for t in tasks if t.status == col_status %}
-    <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
-      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ (t.get('title') or t.prompt)[:60] }}{% if (t.get('title') or t.prompt)|length > 60 %}...{% endif %}</a>
+    <div class="card{% if t.get('hidden') %} hidden-card{% endif %}{% if t.status == 'plan_review' %} card-review{% endif %}">
+      <a class="card-link" href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.get('title') or t.prompt }}</a>
       <div class="meta">
         {{ priority_select(t) }}
         <span class="badge badge-model">P:{{ t.get('plan_model', t.get('model','sonnet')) }}</span>
         <span class="badge badge-model">E:{{ t.get('exec_model', t.get('model','sonnet')) }}</span>
         {% if t.get('auto_approve') %}<span class="badge badge-auto">auto</span>{% endif %}
-        {% if t.get('parent') %}<span>&middot; #{{ t.parent }}</span>{% endif %}
+        {% if t.get('parent') %}<span style="color:var(--text-subtle);font-size:0.67rem">&uarr;#{{ t.parent }}</span>{% endif %}
         {% if t.get('blocked_on') %}<span class="badge badge-blocked">blocked {{ t.blocked_on|length }}</span>{% endif %}
         {% if t.get('pushed_at') %}<span class="pushed-tag">pushed</span>{% endif %}
+        {% if t.status == 'plan_review' %}<a href="/tasks/{{ t.id }}" class="btn-review">Review &rarr;</a>{% endif %}
         {% if t.get('hidden') %}
         <form method="post" action="/tasks/{{ t.id }}/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>
         {% else %}
@@ -343,7 +430,7 @@ BOARD_HTML = """
       </div>
     </div>
     {% else %}
-    <div style="color:#ccc;font-size:0.75rem">&mdash;</div>
+    <div style="color:var(--text-subtle);font-size:0.75rem;padding:0.2rem 0">&mdash;</div>
     {% endfor %}
   </div>
   {% endfor %}
@@ -355,10 +442,10 @@ BOARD_HTML = """
 <div class="section-label">Off-ramp</div>
 <div class="offramp">
   <div class="col col-stopped">
-    <h2>Stopped <span class="count">({{ stopped_tasks|length }})</span></h2>
+    <h2>Stopped <span class="count">{{ stopped_tasks|length }}</span></h2>
     {% for t in stopped_tasks %}
     <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
-      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ (t.get('title') or t.prompt)[:60] }}{% if (t.get('title') or t.prompt)|length > 60 %}...{% endif %}</a>
+      <a class="card-link" href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.get('title') or t.prompt }}</a>
       <div class="meta">
         {{ priority_select(t) }}
         {% if t.get('stop_reason') %}<span class="reason-tag">{{ t.stop_reason }}</span>{% endif %}
@@ -370,14 +457,14 @@ BOARD_HTML = """
       </div>
     </div>
     {% else %}
-    <div style="color:#ccc;font-size:0.75rem">&mdash;</div>
+    <div style="color:var(--text-subtle);font-size:0.75rem;padding:0.2rem 0">&mdash;</div>
     {% endfor %}
   </div>
   <div class="col col-decomposed">
-    <h2>Decomposed <span class="count">({{ decomposed_tasks|length }})</span></h2>
+    <h2>Decomposed <span class="count">{{ decomposed_tasks|length }}</span></h2>
     {% for t in decomposed_tasks %}
     <div class="card{% if t.get('hidden') %} hidden-card{% endif %}">
-      <a href="/tasks/{{ t.id }}">#{{ t.id }} {{ (t.get('title') or t.prompt)[:60] }}{% if (t.get('title') or t.prompt)|length > 60 %}...{% endif %}</a>
+      <a class="card-link" href="/tasks/{{ t.id }}">#{{ t.id }} {{ t.get('title') or t.prompt }}</a>
       <div class="meta">
         {{ priority_select(t) }}
         {% if t.get('hidden') %}
@@ -388,7 +475,7 @@ BOARD_HTML = """
       </div>
     </div>
     {% else %}
-    <div style="color:#ccc;font-size:0.75rem">&mdash;</div>
+    <div style="color:var(--text-subtle);font-size:0.75rem;padding:0.2rem 0">&mdash;</div>
     {% endfor %}
   </div>
 </div>
@@ -405,13 +492,13 @@ BOARD_HTML = """
 
   function renderCard(t) {
     const cls = t.hidden ? ' hidden-card' : '';
+    const isReview = t.status === 'plan_review';
     const display = t.title || t.prompt;
-    const label = display.length > 60 ? esc(display.slice(0,60)) + '...' : esc(display);
     const prio = t.priority || 'medium';
     const planModel = t.plan_model || t.model || 'sonnet';
     const execModel = t.exec_model || t.model || 'sonnet';
     let meta = '<form method="post" action="/tasks/' + t.id + '/set-priority" style="margin:0;display:inline">'
-      + '<select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-' + prio + '" style="padding:0.1rem 0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.65rem;font-weight:600;cursor:pointer">'
+      + '<select name="priority" onchange="this.form.submit()" class="prio-select prio-sel-' + prio + '">'
       + '<option value="high"' + (prio==='high'?' selected':'') + '>high</option>'
       + '<option value="medium"' + (prio==='medium'?' selected':'') + '>medium</option>'
       + '<option value="low"' + (prio==='low'?' selected':'') + '>low</option>'
@@ -419,7 +506,7 @@ BOARD_HTML = """
     meta += '<span class="badge badge-model">P:' + planModel + '</span>';
     meta += '<span class="badge badge-model">E:' + execModel + '</span>';
     if (t.auto_approve) meta += '<span class="badge badge-auto">auto</span>';
-    if (t.parent) meta += '<span>&middot; #' + t.parent + '</span>';
+    if (t.parent) meta += '<span style="color:var(--text-subtle);font-size:0.67rem">\u2191#' + t.parent + '</span>';
     if (t.blocked_on && t.blocked_on.length) meta += '<span class="badge badge-blocked">blocked ' + t.blocked_on.length + '</span>';
     if (t.pushed_at) meta += '<span class="pushed-tag">pushed</span>';
     if (t.stop_reason) meta += '<span class="reason-tag">' + esc(t.stop_reason) + '</span>';
@@ -427,21 +514,20 @@ BOARD_HTML = """
       const elapsed = Math.round((Date.now() - Date.parse(t.started_at)) / 1000);
       const m = Math.floor(elapsed / 60);
       const s = elapsed % 60;
-      meta += '<span class="badge" style="background:#dbeafe;color:#1d4ed8">\u29d7 ' + (m > 0 ? m + 'm ' + s + 's' : s + 's') + '</span>';
+      meta += '<span class="badge badge-elapsed">\u29d7 ' + (m > 0 ? m + 'm ' + s + 's' : s + 's') + '</span>';
     }
+    if (isReview) meta += '<a href="/tasks/' + t.id + '" class="btn-review">Review \u2192</a>';
     const hideAction = t.hidden
       ? '<form method="post" action="/tasks/' + t.id + '/unhide" style="margin:0"><button class="btn-hide">unhide</button></form>'
       : '<form method="post" action="/tasks/' + t.id + '/hide" style="margin:0"><button class="btn-hide">hide</button></form>';
     meta += hideAction;
-    const isReview = t.status === 'plan_review';
-    if (isReview) meta += '<a href="/tasks/' + t.id + '" class="btn-review">Review \u2192</a>';
     const cardCls = 'card' + cls + (isReview ? ' card-review' : '');
-    return '<div class="' + cardCls + '"><a href="/tasks/' + t.id + '">#' + t.id + ' ' + label + '</a><div class="meta">' + meta + '</div></div>';
+    return '<div class="' + cardCls + '"><a class="card-link" href="/tasks/' + t.id + '">#' + t.id + ' ' + esc(display) + '</a><div class="meta">' + meta + '</div></div>';
   }
 
   function renderCol(tasks, status) {
     const items = tasks.filter(t => t.status === status);
-    if (items.length === 0) return '<div style="color:#ccc;font-size:0.75rem">&mdash;</div>';
+    if (items.length === 0) return '<div style="color:var(--text-subtle);font-size:0.75rem;padding:0.2rem 0">&mdash;</div>';
     return items.map(renderCard).join('');
   }
 
@@ -459,12 +545,8 @@ BOARD_HTML = """
           const h2 = cols[i].querySelector('h2');
           if (h2) {
             const countSpan = h2.querySelector('.count');
-            if (countSpan) countSpan.textContent = '(' + count + ')';
+            if (countSpan) countSpan.textContent = count;
           }
-          // Replace cards
-          const existingCards = cols[i].querySelectorAll('.card, div[style]');
-          existingCards.forEach(el => { if (!el.matches('h2')) el.remove(); });
-          // Remove all children except h2
           while (cols[i].children.length > 1) cols[i].children[1].remove();
           cols[i].insertAdjacentHTML('beforeend', renderCol(tasks, status));
         }
@@ -481,7 +563,7 @@ BOARD_HTML = """
           const h2 = offCols[i].querySelector('h2');
           if (h2) {
             const countSpan = h2.querySelector('.count');
-            if (countSpan) countSpan.textContent = '(' + items.length + ')';
+            if (countSpan) countSpan.textContent = items.length;
           }
           while (offCols[i].children.length > 1) offCols[i].children[1].remove();
           offCols[i].insertAdjacentHTML('beforeend', renderCol(tasks, status));
@@ -495,16 +577,16 @@ BOARD_HTML = """
     if (el && d) {
       const dot = d.state || 'idle';
       const label = d.label || dot;
-      el.innerHTML = '<span class="status-dot status-' + dot + '"></span><span style="color:#ccc;font-size:0.8rem">' + esc(label) + '</span>';
+      el.innerHTML = '<span class="status-dot status-' + dot + '"></span><span style="color:#94a3b8;font-size:0.78rem">' + esc(label) + '</span>';
     }
 
-    // Review badge: ⚑ N when plan_review tasks exist
+    // Review badge
     const reviewEl = document.getElementById('review-badge');
     const reviewTasks = data.tasks.filter(t => t.status === 'plan_review');
     if (reviewEl) {
       const n = reviewTasks.length;
       reviewEl.textContent = n > 0 ? '\u2691 ' + n : '';
-      reviewEl.style.display = n > 0 ? 'inline-block' : 'none';
+      reviewEl.style.display = n > 0 ? 'inline-flex' : 'none';
     }
 
     // Action Required banner
@@ -512,10 +594,9 @@ BOARD_HTML = """
     if (banner) {
       if (reviewTasks.length > 0) {
         const first = reviewTasks[0];
-        const label = 'plan';
         banner.innerHTML = '\u2691 Action Required \u2014 ' + reviewTasks.length + ' task' + (reviewTasks.length > 1 ? 's' : '') +
-          ' need' + (reviewTasks.length === 1 ? 's' : '') + ' your review &mdash; ' +
-          '<a href="/tasks/' + first.id + '">Review #' + first.id + ' (' + label + ') &rarr;</a>';
+          ' need' + (reviewTasks.length === 1 ? 's' : '') + ' your review \u2014 ' +
+          '<a href="/tasks/' + first.id + '">Review #' + first.id + ' &rarr;</a>';
         banner.style.display = 'block';
       } else {
         banner.style.display = 'none';
@@ -529,8 +610,7 @@ BOARD_HTML = """
   }
   setTimeout(poll, POLL_MS);
 
-  // Done column: collapsed by default; click h2 to toggle; state persisted in localStorage.
-  // The col-collapsed class is on the container div, so AJAX card replacements don't affect it.
+  // Done column collapsed by default; persisted in localStorage
   (function() {
     const doneCol = document.querySelector('.col-done');
     if (!doneCol) return;
@@ -557,92 +637,139 @@ DETAIL_HTML = """
   <title>Task #{{ task.id }}</title>
   <style>
     """ + SHARED_CSS + """
-    .content { padding: 1rem; max-width: 1100px; }
-    pre { background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 8px;
-          overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; }
-    .actions { display: flex; gap: 0.5rem; margin: 1rem 0; flex-wrap: wrap; align-items: center; }
-    /* Two-column layout */
-    .detail-cols { display: flex; gap: 1.5rem; align-items: flex-start; margin-top: 1rem; }
+    .content { padding: 1rem; max-width: 1200px; margin: 0 auto; }
+    .back-link { font-size: 0.82rem; color: var(--text-muted); }
+    .back-link:hover { color: var(--text); }
+    .task-title { font-size: 1.25rem; font-weight: 700; margin: 0.5rem 0 0.25rem;
+                  color: var(--text); line-height: 1.3; }
+    .task-prompt { color: var(--text-muted); margin: 0 0 0.75rem; font-size: 0.88rem;
+                   white-space: pre-wrap; line-height: 1.55; }
+    pre { background: #1e2433; color: #e2e8f0; padding: 1rem; border-radius: var(--radius);
+          overflow-x: auto; font-size: 0.78rem; white-space: pre-wrap; line-height: 1.6; }
+    .actions { display: flex; gap: 0.5rem; margin: 0.75rem 0; flex-wrap: wrap; align-items: center; }
+    .detail-cols { display: flex; gap: 1.25rem; align-items: flex-start; margin-top: 0.75rem; }
     .detail-left  { flex: 3; min-width: 0; }
-    .detail-right { flex: 2; min-width: 0; }
-    .meta-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
-    .meta-card h3 { margin: 0 0 0.5rem; font-size: 0.85rem; text-transform: uppercase;
-                    letter-spacing: 0.05em; color: #666; }
-    .meta-row { font-size: 0.85rem; margin-bottom: 0.35rem; }
-    .meta-row label { color: #888; font-size: 0.75rem; display: block; margin-bottom: 0.1rem; }
-    .subtasks { margin-top: 0; }
-    .subtask-item { background: #fff; border: 1px solid #e0e0e0; border-radius: 6px;
-                    padding: 0.5rem; margin-bottom: 0.4rem; font-size: 0.85rem; }
+    .detail-right { flex: 0 0 280px; min-width: 0; }
+    .meta-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: var(--radius); padding: 0.9rem 1rem; margin-bottom: 0.75rem;
+                 box-shadow: var(--shadow-sm); }
+    .meta-card h3 { margin: 0 0 0.6rem; font-size: 0.68rem; text-transform: uppercase;
+                    letter-spacing: .06em; color: var(--text-subtle); font-weight: 700; }
+    .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 0.85rem;
+                 font-size: 0.83rem; align-items: baseline; }
+    .meta-key { color: var(--text-muted); font-size: 0.75rem; white-space: nowrap; }
+    .meta-val { color: var(--text); }
+    .meta-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.6rem;
+                    padding-top: 0.6rem; border-top: 1px solid var(--border); }
+    .subtask-item { background: var(--surface-2); border: 1px solid var(--border);
+                    border-radius: var(--radius-sm); padding: 6px 9px; margin-bottom: 5px;
+                    font-size: 0.82rem; line-height: 1.4; }
     .status-icon { font-style: normal; margin-right: 0.3rem; }
-    .status-icon.done       { color: #16a34a; }
-    .status-icon.running    { color: #2563eb; }
-    .status-icon.review     { color: #d97706; }
-    .status-icon.pending    { color: #6b7280; }
-    .status-icon.blocked    { color: #7c3aed; }
-    .status-icon.stopped    { color: #dc2626; }
-    table.sessions { border-collapse: collapse; width: 100%; font-size: 0.8rem; margin-top: 0.5rem; }
-    table.sessions th, table.sessions td { border: 1px solid #e0e0e0; padding: 0.4rem 0.6rem; text-align: left; }
-    table.sessions th { background: #f3f4f6; font-weight: 600; }
-    table.sessions tr:nth-child(even) { background: #fafafa; }
-    .edit-form { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
-                 padding: 1rem; margin: 1rem 0; display: none; }
-    .edit-form textarea { width: 100%; padding: 0.5rem; border: 1px solid #ccc;
-                          border-radius: 6px; font-size: 0.9rem; resize: none; overflow: hidden; box-sizing: border-box; }
-    .edit-form select { padding: 0.4rem; border-radius: 6px; border: 1px solid #ccc; }
-    .timestamp { color: #888; font-size: 0.75rem; }
-    .rate-limit-banner { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px;
-                         padding: 0.5rem 0.75rem; font-size: 0.85rem; margin: 0.5rem 0; }
-    /* Plan rendering */
-    .plan-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
-                 padding: 1rem; margin-bottom: 1rem; }
-    .plan-card h3 { margin: 0 0 0.5rem; font-size: 0.85rem; text-transform: uppercase;
-                    letter-spacing: 0.05em; color: #666; }
-    .plan-decision-badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px;
-                           font-size: 0.8rem; font-weight: 700; margin-bottom: 0.75rem; }
+    .status-icon.done    { color: #059669; }
+    .status-icon.running { color: #2563eb; }
+    .status-icon.review  { color: #d97706; }
+    .status-icon.pending { color: #94a3b8; }
+    .status-icon.blocked { color: #7c3aed; }
+    .status-icon.stopped { color: #dc2626; }
+    table.sessions { border-collapse: collapse; width: 100%; font-size: 0.78rem; }
+    table.sessions th, table.sessions td { border: 1px solid var(--border);
+                                           padding: 0.35rem 0.55rem; text-align: left; }
+    table.sessions th { background: var(--surface-2); font-weight: 600;
+                        color: var(--text-muted); font-size: 0.72rem;
+                        text-transform: uppercase; letter-spacing: .04em; }
+    table.sessions tr:nth-child(even) { background: var(--surface-2); }
+    .edit-form { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: var(--radius); padding: 1rem; margin: 0.75rem 0;
+                 display: none; box-shadow: var(--shadow-sm); }
+    .edit-form input[type="text"], .edit-form textarea {
+      width: 100%; padding: 0.45rem 0.65rem; border: 1px solid var(--border);
+      border-radius: var(--radius-sm); font-size: 0.875rem; font-family: inherit;
+      color: var(--text); margin-bottom: 0.4rem; background: var(--surface-2); }
+    .edit-form input:focus, .edit-form textarea:focus { outline: none;
+      border-color: #a5b4fc; box-shadow: 0 0 0 3px rgba(79,70,229,.1); }
+    .edit-form textarea { resize: none; overflow: hidden; }
+    .edit-form select { padding: 0.35rem 0.5rem; border-radius: var(--radius-sm);
+                        border: 1px solid var(--border); font-size: 0.82rem;
+                        background: var(--surface); }
+    .edit-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+                margin-top: 0.4rem; }
+    .inline-label { font-size: 0.8rem; color: var(--text-muted); }
+    .timestamp { color: var(--text-muted); font-size: 0.78rem; font-family: monospace; }
+    .rate-limit-banner { background: #fef3c7; border: 1px solid #fbbf24;
+                         border-radius: var(--radius); padding: 0.5rem 0.75rem;
+                         font-size: 0.85rem; margin: 0.5rem 0; color: #92400e; }
+    .plan-card { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: var(--radius); padding: 1rem; margin-bottom: 0.75rem;
+                 box-shadow: var(--shadow-sm); }
+    .plan-card h3 { margin: 0 0 0.5rem; font-size: 0.68rem; text-transform: uppercase;
+                    letter-spacing: .06em; color: var(--text-subtle); font-weight: 700; }
+    .plan-decision-badge { display: inline-flex; align-items: center; padding: 3px 11px;
+                           border-radius: 20px; font-size: 0.78rem; font-weight: 700;
+                           margin-bottom: 0.75rem; letter-spacing: .04em; }
     .plan-decision-execute  { background: #dbeafe; color: #1d4ed8; }
     .plan-decision-decompose { background: #f3e8ff; color: #6b21a8; }
-    .plan-reasoning { font-size: 0.85rem; color: #555; font-style: italic;
-                      margin-bottom: 0.75rem; padding: 0.5rem; background: #f9f9f9;
-                      border-left: 3px solid #d1d5db; border-radius: 0 4px 4px 0; }
-    .plan-steps { font-size: 0.85rem; white-space: pre-wrap; margin: 0; }
+    .plan-reasoning { font-size: 0.85rem; color: var(--text-muted); font-style: italic;
+                      margin-bottom: 0.75rem; padding: 0.6rem 0.75rem;
+                      background: var(--surface-2); border-left: 3px solid #a5b4fc;
+                      border-radius: 0 var(--radius-sm) var(--radius-sm) 0; line-height: 1.6; }
+    .plan-steps { font-size: 0.82rem; white-space: pre-wrap; margin: 0; font-family: inherit; }
     .subtask-tree { list-style: none; padding: 0; margin: 0; }
-    .subtask-tree li { padding: 0.5rem 0.6rem; margin-bottom: 0.35rem; background: #f5f3ff;
-                       border: 1px solid #ddd6fe; border-radius: 6px; font-size: 0.85rem; }
-    .subtask-tree li .stnum { font-weight: 700; color: #6b21a8; margin-right: 0.4rem; }
-    .subtask-tree li .stdep { font-size: 0.75rem; color: #888; margin-top: 0.2rem; }
-    /* Artifact rendering */
-    .artifact { margin: 0.5rem 0; padding: 0.5rem; border-radius: 4px; }
-    .artifact-git-commit { font-family: monospace; background: #f0f9ff; border: 1px solid #bae6fd; }
-    .artifact-ref { font-weight: bold; color: #0284c7; margin-right: 0.5rem; }
-    .artifact-text { background: #f9fafb; border: 1px solid #e5e7eb; white-space: pre-wrap; }
-    .artifact-document { background: #f9fafb; border: 1px solid #e5e7eb; }
-    .artifact-document pre { margin: 0.5rem 0 0; white-space: pre-wrap; }
-    .artifact-doc-path { padding: 0.4rem 0.5rem; font-size: 0.82rem; color: #555; }
-    .artifact-code-diff { background: #1e1e1e; color: #d4d4d4; padding: 0.75rem; border-radius: 4px; font-size: 0.8rem; overflow-x: auto; }
-    .artifact-url-list { margin: 0; padding-left: 1.2rem; }
-    .artifact-url-list a { color: #2563eb; }
-    /* Report rendering (decomposed parent tasks) */
-    .report-card { margin: 1rem 0; border: 1px solid #d1fae5; border-radius: 6px; background: #f0fdf4; }
-    .report-card summary { padding: 0.6rem 0.8rem; cursor: pointer; font-weight: 600; color: #065f46; }
-    .report-card summary:hover { background: #dcfce7; border-radius: 6px; }
-    .report-content { margin: 0; padding: 0.8rem; font-size: 0.85rem; border-top: 1px solid #d1fae5; line-height: 1.6; }
-    .report-content h1,.report-content h2,.report-content h3 { margin: 0.8rem 0 0.3rem; }
+    .subtask-tree li { padding: 8px 10px; margin-bottom: 5px; background: #faf5ff;
+                       border: 1px solid #e9d5ff; border-radius: var(--radius-sm);
+                       font-size: 0.82rem; line-height: 1.4; }
+    .subtask-tree li .stnum { font-weight: 700; color: #7c3aed; margin-right: 0.35rem; }
+    .subtask-tree li .stdep { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.2rem; }
+    .artifact { margin: 0.5rem 0; padding: 0.6rem 0.75rem; border-radius: var(--radius-sm);
+                font-size: 0.82rem; }
+    .artifact-git-commit { font-family: monospace; background: #f0f9ff;
+                           border: 1px solid #bae6fd; }
+    .artifact-ref { font-weight: 700; color: #0284c7; margin-right: 0.4rem; }
+    .artifact-text { background: var(--surface-2); border: 1px solid var(--border);
+                     white-space: pre-wrap; }
+    .artifact-document { background: var(--surface-2); border: 1px solid var(--border); }
+    .artifact-document pre { margin: 0.4rem 0 0; background: transparent; color: var(--text);
+                              padding: 0.4rem; }
+    .artifact-doc-path { padding: 0.4rem; font-size: 0.82rem; color: var(--text-muted); }
+    .artifact-code-diff { background: #1e2433; color: #e2e8f0; padding: 0.75rem;
+                          border-radius: var(--radius-sm); font-size: 0.78rem;
+                          overflow-x: auto; font-family: monospace; }
+    .artifact-url-list { margin: 0.3rem 0 0; padding-left: 1.2rem; }
+    .report-card { margin: 0.75rem 0; border: 1px solid #d1fae5;
+                   border-radius: var(--radius); background: #f0fdf4; }
+    .report-card summary { padding: 0.6rem 0.8rem; cursor: pointer; font-weight: 600;
+                           color: #065f46; font-size: 0.88rem; }
+    .report-card summary:hover { background: #dcfce7; border-radius: var(--radius); }
+    .report-content { margin: 0; padding: 0.75rem; font-size: 0.85rem;
+                      border-top: 1px solid #d1fae5; line-height: 1.65; }
+    .report-content h1,.report-content h2,.report-content h3 { margin: 0.8rem 0 0.3rem;
+                                                                 font-size: 1rem; }
     .report-content table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
-    .report-content th, .report-content td { border: 1px solid #d1d5db; padding: 0.3rem 0.5rem; }
-    .report-content th { background: #f3f4f6; }
-    .report-content code { background: #f3f4f6; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.8rem; }
-    .report-content pre { background: #f3f4f6; padding: 0.5rem; border-radius: 4px; overflow-x: auto; }
-    .report-content ul, .report-content ol { padding-left: 1.5rem; }
-    .report-content a { color: #2563eb; }
+    .report-content th,.report-content td { border: 1px solid var(--border);
+                                            padding: 0.3rem 0.5rem; }
+    .report-content th { background: var(--surface-2); font-weight: 600; }
+    .report-content code { background: var(--surface-2); padding: 0.1rem 0.3rem;
+                           border-radius: 3px; font-size: 0.8rem; }
+    .report-content pre { background: #1e2433; color: #e2e8f0; padding: 0.5rem;
+                          border-radius: var(--radius-sm); overflow-x: auto; }
+    .report-content ul,.report-content ol { padding-left: 1.5rem; }
+    .inline-model-form { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .inline-model-form select { padding: 0.25rem 0.4rem; border-radius: var(--radius-sm);
+                                 border: 1px solid var(--border); font-size: 0.78rem;
+                                 background: var(--surface); }
+    @media (max-width: 768px) {
+      .content { padding: 0.75rem; }
+      .detail-cols { flex-direction: column; }
+      .detail-right { flex: 0 0 auto; width: 100%; }
+    }
   </style>
 </head>
 <body>
 """ + HEADER_HTML + """
 <div class="content">
-<p><a href="/">&larr; Board</a></p>
-<h1>#{{ task.id }} &mdash; {{ task.get('title') or task.prompt }}</h1>
+<a href="/" class="back-link">&larr; Board</a>
+<h1 class="task-title">#{{ task.id }} &mdash; {{ task.get('title') or task.prompt }}</h1>
 {% if task.get('title') and task.get('title') != task.prompt %}
-<p style="color:#555;margin:-0.5rem 0 1rem;font-size:0.9rem;white-space:pre-wrap">{{ task.prompt }}</p>
+<p class="task-prompt">{{ task.prompt }}</p>
 {% endif %}
 
 {% if task.get('rate_limited_at') %}
@@ -651,90 +778,79 @@ DETAIL_HTML = """
 </div>
 {% endif %}
 
-{# ---- Two-column layout ---- #}
 <div class="detail-cols">
 
-  {# ======= LEFT: plan + approve/reject ======= #}
   <div class="detail-left">
 
-    {# ---- Edit form (hidden by default, shown by "Edit Task" button) ---- #}
     <div class="edit-form" id="edit-form">
       <form method="post" action="/tasks/{{ task.id }}/edit">
-        <p><strong>Edit Task</strong></p>
-        <input type="text" name="title" value="{{ task.get('title') or '' }}" placeholder="Title..."
-          style="width:100%;padding:0.4rem;border-radius:6px;border:1px solid #ccc;font-size:0.9rem;box-sizing:border-box;margin-bottom:0.4rem">
+        <p style="margin:0 0 0.6rem;font-weight:600;font-size:0.88rem">Edit Task</p>
+        <input type="text" name="title" value="{{ task.get('title') or '' }}" placeholder="Title...">
         <textarea name="prompt" rows="3"
           oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'">{{ task.prompt }}</textarea>
-        <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
-          <label>Priority:</label>
+        <div class="edit-row">
+          <span class="inline-label">Priority</span>
           <select name="priority">
             <option value="high" {% if task.get('priority')=='high' %}selected{% endif %}>High</option>
             <option value="medium" {% if task.get('priority','medium')=='medium' %}selected{% endif %}>Medium</option>
             <option value="low" {% if task.get('priority')=='low' %}selected{% endif %}>Low</option>
           </select>
-          <label>Plan:</label>
+          <span class="inline-label">Plan</span>
           <select name="plan_model">
             {% set pm = task.get('plan_model', task.get('model','sonnet')) %}
             <option value="sonnet" {% if pm=='sonnet' %}selected{% endif %}>Sonnet</option>
             <option value="opus" {% if pm=='opus' %}selected{% endif %}>Opus</option>
             <option value="haiku" {% if pm=='haiku' %}selected{% endif %}>Haiku</option>
           </select>
-          <label>Exec:</label>
+          <span class="inline-label">Exec</span>
           <select name="exec_model">
             {% set em = task.get('exec_model', task.get('model','sonnet')) %}
             <option value="sonnet" {% if em=='sonnet' %}selected{% endif %}>Sonnet</option>
             <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
             <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
           </select>
-          <button class="btn btn-edit" type="submit">Save</button>
-          <button class="btn" type="button" onclick="document.getElementById('edit-form').style.display='none'" style="background:#e5e7eb;color:#333">Cancel</button>
+          <button class="btn btn-edit btn-sm" type="submit">Save</button>
+          <button class="btn btn-sm btn-secondary" type="button"
+            onclick="document.getElementById('edit-form').style.display='none'">Cancel</button>
         </div>
       </form>
     </div>
 
-    {# ---- Action buttons based on current status ---- #}
     <div class="actions">
-
-      {# Plan review: approve / reject #}
       {% if task.status == 'plan_review' %}
       <form method="post" action="/tasks/{{ task.id }}/approve">
         <button class="btn btn-approve">Approve Plan</button>
       </form>
       <div id="reject-section-{{ task.id }}">
-        <button class="btn btn-reject" onclick="document.getElementById('reject-expand-{{ task.id }}').style.display='block';this.style.display='none'">Reject</button>
+        <button class="btn btn-reject"
+          onclick="document.getElementById('reject-expand-{{ task.id }}').style.display='block';this.style.display='none'">Reject</button>
         <div id="reject-expand-{{ task.id }}" style="display:none;margin-top:0.5rem">
           <form method="post" action="/tasks/{{ task.id }}/reject">
             <textarea name="feedback" placeholder="Rejection reason (optional)" rows="3"
-              style="width:100%;padding:0.4rem;border-radius:6px;border:1px solid #ccc;resize:vertical;box-sizing:border-box"></textarea>
-            <div style="display:flex;gap:0.5rem;margin-top:0.3rem">
-              <button class="btn btn-reject">Submit Rejection</button>
-              <button type="button" class="btn btn-sm" style="background:#6b7280;color:#fff"
+              style="width:100%;padding:0.45rem 0.65rem;border:1px solid var(--border);border-radius:var(--radius-sm);resize:vertical;font-family:inherit;font-size:0.875rem;background:var(--surface-2);"></textarea>
+            <div style="display:flex;gap:0.5rem;margin-top:0.4rem">
+              <button class="btn btn-reject btn-sm">Submit Rejection</button>
+              <button type="button" class="btn btn-sm btn-secondary"
                 onclick="document.getElementById('reject-expand-{{ task.id }}').style.display='none';document.querySelector('#reject-section-{{ task.id }} > .btn-reject').style.display=''">Cancel</button>
             </div>
           </form>
         </div>
       </div>
       {% endif %}
-
-      {# Cancel: only for active or review states #}
       {% if task.status in ('planning', 'executing', 'plan_review') %}
       <form method="post" action="/tasks/{{ task.id }}/cancel" onsubmit="return confirm('Cancel this task?')">
         <button class="btn btn-cancel btn-sm">Cancel</button>
       </form>
       {% endif %}
-
-      {# Retry: only for stopped or done #}
       {% if task.status in ('stopped', 'done') %}
       <form method="post" action="/tasks/{{ task.id }}/retry">
         <button class="btn btn-retry btn-sm">Retry / Requeue</button>
       </form>
       {% endif %}
+    </div>
 
-    </div>{# end .actions #}
-
-    {# ---- Plan ---- #}
     {% if task.get('plan') %}
-    <h2>Plan</h2>
+    <h2 style="font-size:0.95rem;margin:0.75rem 0 0.4rem">Plan</h2>
     {% if plan_parsed %}
       <div class="plan-card">
         <span class="plan-decision-badge plan-decision-{{ plan_parsed.decision }}">
@@ -766,27 +882,23 @@ DETAIL_HTML = """
     {% endif %}
     {% endif %}
 
-    {# ---- Report (decomposed parent tasks) ---- #}
     {% if task.get('report') %}
-    <h2>Report</h2>
+    <h2 style="font-size:0.95rem;margin:0.75rem 0 0.4rem">Report</h2>
     <details class="report-card" open>
       <summary>Consolidated report from all subtasks</summary>
       <div class="report-content">{{ task.report | md }}</div>
     </details>
     {% endif %}
 
-    {# ---- Result Summary ---- #}
-    {# Only show if report is absent or different — avoids duplicate when report == summary (leaf tasks) #}
     {% set result_summary = (task.get('result') or {}).get('summary') or task.get('summary') %}
     {% if result_summary and result_summary != task.get('report') %}
-    <h2>Result Summary</h2>
+    <h2 style="font-size:0.95rem;margin:0.75rem 0 0.4rem">Result Summary</h2>
     <div class="report-content" style="border:none;padding:0">{{ result_summary | md }}</div>
     {% endif %}
 
-    {# ---- Artifacts ---- #}
     {% set artifacts = (task.get('result') or {}).get('artifacts') or [] %}
     {% if artifacts %}
-    <h2>Artifacts</h2>
+    <h2 style="font-size:0.95rem;margin:0.75rem 0 0.4rem">Artifacts</h2>
     {% for a in artifacts %}
       {% if a.get('type') == 'git_commit' %}
       <div class="artifact artifact-git-commit"><span class="artifact-ref">{{ a.ref[:8] }}</span> {{ a.get('message','') }}</div>
@@ -799,126 +911,127 @@ DETAIL_HTML = """
       {% elif a.get('type') == 'url_list' %}
       <ul class="artifact artifact-url-list">{% for item in a.get('items',[]) %}{% set url = item.get('url','') if item is mapping else item %}{% set title = item.get('title', url) if item is mapping else url %}<li>{% if url.startswith('http://') or url.startswith('https://') %}<a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ title or url }}</a>{% if item is mapping and item.get('note') %} — {{ item.note }}{% endif %}{% else %}{{ url }}{% endif %}</li>{% endfor %}</ul>
       {% else %}
-      <div class="artifact artifact-unknown">{{ a | tojson }}</div>
+      <div class="artifact" style="background:var(--surface-2);border:1px solid var(--border)">{{ a | tojson }}</div>
       {% endif %}
     {% endfor %}
     {% endif %}
 
   </div>{# end .detail-left #}
 
-  {# ======= RIGHT: metadata + subtasks + sessions ======= #}
   <div class="detail-right">
 
-    {# ---- Metadata card ---- #}
     <div class="meta-card">
       <h3>Details</h3>
-      <div class="meta-row">
+      <div style="margin-bottom:0.6rem">
         <span class="state-badge state-{{ task.status }}">{{ task.status }}</span>
         {% if task.get('stop_reason') %}<span class="state-badge state-stopped" style="margin-left:0.3rem">{{ task.stop_reason }}</span>{% endif %}
         {% if task.get('pushed_at') %}<span class="state-badge state-done" style="margin-left:0.3rem">pushed</span>{% endif %}
       </div>
-      <div class="meta-row">
-        <label>Priority</label>
-        {{ task.get('priority','medium') }}
-      </div>
-      {% set pm = task.get('plan_model', task.get('model','sonnet')) %}
-      {% set em = task.get('exec_model', task.get('model','sonnet')) %}
-      <div class="meta-row">
-        <label>Models</label>
-        <form method="post" action="/tasks/{{ task.id }}/set-model" style="display:inline">
-          Plan: <select name="plan_model" onchange="this.form.submit()" style="padding:0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.82rem">
-            <option value="sonnet" {% if pm=='sonnet' %}selected{% endif %}>Sonnet</option>
-            <option value="opus" {% if pm=='opus' %}selected{% endif %}>Opus</option>
-            <option value="haiku" {% if pm=='haiku' %}selected{% endif %}>Haiku</option>
-          </select>
-          Exec: <select name="exec_model" onchange="this.form.submit()" style="padding:0.2rem;border-radius:4px;border:1px solid #ccc;font-size:0.82rem">
-            <option value="sonnet" {% if em=='sonnet' %}selected{% endif %}>Sonnet</option>
-            <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
-            <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
-          </select>
-        </form>
-      </div>
-      <div class="meta-row">
-        <label>Auto-approve</label>
-        <form method="post" action="/tasks/{{ task.id }}/set-auto-approve" style="display:inline">
-          <input type="hidden" name="auto_approve" value="0">
-          <input type="checkbox" name="auto_approve" value="1" {% if task.get('auto_approve') %}checked{% endif %} onchange="this.form.submit()">
-        </form>
-      </div>
-      {% if task.get('parent') %}
-      <div class="meta-row"><label>Parent</label><a href="/tasks/{{ task.parent }}">#{{ task.parent }}</a></div>
-      {% endif %}
-      {% if task.get('created_at') %}
-      <div class="meta-row"><label>Created</label><span class="timestamp">{{ task.created_at[:19] }}</span></div>
-      {% endif %}
-      {% if task.get('completed_at') %}
-      <div class="meta-row"><label>Completed</label><span class="timestamp">{{ task.completed_at[:19] }}</span></div>
-      {% endif %}
-      {% if task.get('pushed_at') %}
-      <div class="meta-row"><label>Pushed</label><span class="timestamp">{{ task.pushed_at[:19] }}</span></div>
-      {% endif %}
-      <div class="meta-row" style="margin-top:0.75rem;display:flex;gap:0.4rem;flex-wrap:wrap">
-        {# Edit: available for any status except in_progress #}
-        {% if task.status != 'in_progress' %}
-        <button class="btn btn-edit btn-sm" onclick="var f=document.getElementById('edit-form');f.style.display='block';var ta=f.querySelector('textarea');ta.style.height='auto';ta.style.height=ta.scrollHeight+'px';f.scrollIntoView({behavior:'smooth',block:'start'})">Edit Task</button>
+      <div class="meta-grid">
+        <span class="meta-key">Priority</span>
+        <span class="meta-val">{{ task.get('priority','medium') }}</span>
+        {% set pm = task.get('plan_model', task.get('model','sonnet')) %}
+        {% set em = task.get('exec_model', task.get('model','sonnet')) %}
+        <span class="meta-key">Models</span>
+        <span class="meta-val">
+          <form method="post" action="/tasks/{{ task.id }}/set-model" class="inline-model-form">
+            <span style="font-size:0.75rem;color:var(--text-muted)">P</span>
+            <select name="plan_model" onchange="this.form.submit()">
+              <option value="sonnet" {% if pm=='sonnet' %}selected{% endif %}>Sonnet</option>
+              <option value="opus" {% if pm=='opus' %}selected{% endif %}>Opus</option>
+              <option value="haiku" {% if pm=='haiku' %}selected{% endif %}>Haiku</option>
+            </select>
+            <span style="font-size:0.75rem;color:var(--text-muted)">E</span>
+            <select name="exec_model" onchange="this.form.submit()">
+              <option value="sonnet" {% if em=='sonnet' %}selected{% endif %}>Sonnet</option>
+              <option value="opus" {% if em=='opus' %}selected{% endif %}>Opus</option>
+              <option value="haiku" {% if em=='haiku' %}selected{% endif %}>Haiku</option>
+            </select>
+          </form>
+        </span>
+        <span class="meta-key">Auto-approve</span>
+        <span class="meta-val">
+          <form method="post" action="/tasks/{{ task.id }}/set-auto-approve" style="display:inline">
+            <input type="hidden" name="auto_approve" value="0">
+            <input type="checkbox" name="auto_approve" value="1"
+              {% if task.get('auto_approve') %}checked{% endif %}
+              onchange="this.form.submit()" style="accent-color:#4f46e5;cursor:pointer">
+          </form>
+        </span>
+        {% if task.get('parent') %}
+        <span class="meta-key">Parent</span>
+        <span class="meta-val"><a href="/tasks/{{ task.parent }}">#{{ task.parent }}</a></span>
         {% endif %}
-        {# Delete: available unless in_progress #}
+        {% if task.get('created_at') %}
+        <span class="meta-key">Created</span>
+        <span class="timestamp">{{ task.created_at[:19] }}</span>
+        {% endif %}
+        {% if task.get('completed_at') %}
+        <span class="meta-key">Completed</span>
+        <span class="timestamp">{{ task.completed_at[:19] }}</span>
+        {% endif %}
+        {% if task.get('pushed_at') %}
+        <span class="meta-key">Pushed</span>
+        <span class="timestamp">{{ task.pushed_at[:19] }}</span>
+        {% endif %}
+      </div>
+      <div class="meta-actions">
         {% if task.status != 'in_progress' %}
-        <form method="post" action="/tasks/{{ task.id }}/delete" onsubmit="return confirm('Delete task #{{ task.id }}? This cannot be undone.')">
+        <button class="btn btn-edit btn-sm"
+          onclick="var f=document.getElementById('edit-form');f.style.display='block';var ta=f.querySelector('textarea');ta.style.height='auto';ta.style.height=ta.scrollHeight+'px';f.scrollIntoView({behavior:'smooth',block:'start'})">Edit</button>
+        {% endif %}
+        {% if task.status != 'in_progress' %}
+        <form method="post" action="/tasks/{{ task.id }}/delete"
+          onsubmit="return confirm('Delete task #{{ task.id }}? This cannot be undone.')">
           <button class="btn btn-delete btn-sm">Delete</button>
         </form>
         {% endif %}
-        {# Hide / Unhide #}
         {% if task.get('hidden') %}
         <form method="post" action="/tasks/{{ task.id }}/unhide">
-          <button class="btn btn-sm" style="background:#6b7280;color:#fff">Unhide</button>
+          <button class="btn btn-sm btn-secondary">Unhide</button>
         </form>
         {% else %}
         <form method="post" action="/tasks/{{ task.id }}/hide">
-          <button class="btn btn-sm" style="background:#6b7280;color:#fff">Hide</button>
+          <button class="btn btn-sm btn-secondary">Hide</button>
         </form>
         {% endif %}
       </div>
-    </div>{# end .meta-card #}
+    </div>
 
-    {# ---- Subtasks card ---- #}
     {% if subtasks %}
     <div class="meta-card">
       <h3>Subtasks ({{ subtasks|length }})</h3>
-      <div class="subtasks">
-        {% for s in subtasks %}
-        {% set _blocked = s.get('blocked_on') and s.blocked_on|length > 0 %}
-        {% if _blocked %}
-          {% set _icon = '⊟' %}{% set _cls = 'blocked' %}
-        {% elif s.status == 'done' %}
-          {% set _icon = '✓' %}{% set _cls = 'done' %}
-        {% elif s.status == 'in_progress' %}
-          {% set _icon = '⟳' %}{% set _cls = 'running' %}
-        {% elif s.status == 'plan_review' %}
-          {% set _icon = '●' %}{% set _cls = 'review' %}
-        {% elif s.status == 'stopped' %}
-          {% set _icon = '⊘' %}{% set _cls = 'stopped' %}
-        {% else %}
-          {% set _icon = '○' %}{% set _cls = 'pending' %}
-        {% endif %}
-        <div class="subtask-item">
-          <i class="status-icon {{ _cls }}">{{ _icon }}</i>
-          <a href="/tasks/{{ s.id }}">#{{ s.id }}</a>
-          {% if _blocked %}blocked(#{{ s.blocked_on|join(', #') }}){% endif %}
-          {{ s.prompt[:80] }}
-        </div>
-        {% endfor %}
+      {% for s in subtasks %}
+      {% set _blocked = s.get('blocked_on') and s.blocked_on|length > 0 %}
+      {% if _blocked %}
+        {% set _icon = '⊟' %}{% set _cls = 'blocked' %}
+      {% elif s.status == 'done' %}
+        {% set _icon = '✓' %}{% set _cls = 'done' %}
+      {% elif s.status == 'in_progress' %}
+        {% set _icon = '⟳' %}{% set _cls = 'running' %}
+      {% elif s.status == 'plan_review' %}
+        {% set _icon = '●' %}{% set _cls = 'review' %}
+      {% elif s.status == 'stopped' %}
+        {% set _icon = '⊘' %}{% set _cls = 'stopped' %}
+      {% else %}
+        {% set _icon = '○' %}{% set _cls = 'pending' %}
+      {% endif %}
+      <div class="subtask-item">
+        <i class="status-icon {{ _cls }}">{{ _icon }}</i>
+        <a href="/tasks/{{ s.id }}">#{{ s.id }}</a>
+        {% if _blocked %}<span style="color:var(--text-muted);font-size:0.75rem"> blocked(#{{ s.blocked_on|join(', #') }})</span>{% endif %}
+        <span style="color:var(--text-muted)"> {{ s.prompt[:80] }}</span>
       </div>
-    </div>{# end subtasks card #}
+      {% endfor %}
+    </div>
     {% endif %}
 
-    {# ---- Sessions card ---- #}
     {% if task.get('sessions') %}
     <div class="meta-card">
       <h3>Run History</h3>
       <table class="sessions">
         <thead>
-          <tr><th>Run</th><th>Started</th><th>Duration</th><th>Outcome</th></tr>
+          <tr><th>#</th><th>Started</th><th>Dur</th><th>Result</th></tr>
         </thead>
         <tbody>
           {% for s in task.sessions %}
@@ -929,24 +1042,20 @@ DETAIL_HTML = """
             <td>{{ s.get('started_at') | pt }}</td>
             <td>
               {% set dur = s.get('duration_s', 0) %}
-              {% if dur >= 3600 %}{{ (dur // 3600) }}h {{ ((dur % 3600) // 60) }}m
-              {% elif dur >= 60 %}{{ (dur // 60) }}m {{ (dur % 60) }}s
+              {% if dur >= 3600 %}{{ (dur // 3600) }}h{{ ((dur % 3600) // 60) }}m
+              {% elif dur >= 60 %}{{ (dur // 60) }}m{{ (dur % 60) }}s
               {% else %}{{ dur }}s{% endif %}
             </td>
             <td>
-              {% if rl %}
-                ⚠ Rate limited — will retry
-              {% elif rc == 0 %}
-                ✓ Completed
-              {% else %}
-                ✗ Failed (exit {{ rc }})
-              {% endif %}
+              {% if rl %}⚠ rate limited
+              {% elif rc == 0 %}✓ ok
+              {% else %}✗ exit {{ rc }}{% endif %}
             </td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
-    </div>{# end sessions card #}
+    </div>
     {% endif %}
 
   </div>{# end .detail-right #}
@@ -1007,16 +1116,16 @@ PROGRESS_HTML = """
   <title>Progress Log</title>
   <style>
     """ + SHARED_CSS + """
-    .content { padding: 1rem; max-width: 900px; }
-    pre { background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 8px;
-          overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; }
-    .empty { color: #888; font-style: italic; }
+    .content { padding: 1rem; max-width: 960px; margin: 0 auto; }
+    pre { background: #1e2433; color: #e2e8f0; padding: 1rem; border-radius: var(--radius);
+          overflow-x: auto; font-size: 0.78rem; white-space: pre-wrap; line-height: 1.6; }
+    .empty { color: var(--text-subtle); font-style: italic; }
   </style>
 </head>
 <body>
 """ + HEADER_HTML + """
 <div class="content">
-<h1>Agent Task Log</h1>
+<h1 style="font-size:1.1rem;margin:0.75rem 0">Agent Task Log</h1>
 {% if content %}
 <pre>{{ content }}</pre>
 {% else %}
@@ -1037,16 +1146,16 @@ LOG_HTML = """
   <title>Git Log</title>
   <style>
     """ + SHARED_CSS + """
-    .content { padding: 1rem; max-width: 900px; }
-    pre { background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 8px;
-          overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; }
-    .empty { color: #888; font-style: italic; }
+    .content { padding: 1rem; max-width: 960px; margin: 0 auto; }
+    pre { background: #1e2433; color: #e2e8f0; padding: 1rem; border-radius: var(--radius);
+          overflow-x: auto; font-size: 0.78rem; white-space: pre-wrap; line-height: 1.6; }
+    .empty { color: var(--text-subtle); font-style: italic; }
   </style>
 </head>
 <body>
 """ + HEADER_HTML + """
 <div class="content">
-<h1>Recent Git Log</h1>
+<h1 style="font-size:1.1rem;margin:0.75rem 0">Recent Git Log</h1>
 {% if log_output %}
 <pre>{{ log_output }}</pre>
 {% else %}
@@ -1091,29 +1200,57 @@ LOGIN_HTML = """<!DOCTYPE html>
 <html>
 <head>
   <title>Sign in — Xingent</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; background: #f5f5f5;
-           display: flex; align-items: center; justify-content: center;
-           height: 100vh; margin: 0; }
-    .box { background: #fff; padding: 2rem; border-radius: 8px;
-           box-shadow: 0 2px 8px rgba(0,0,0,0.12); width: 320px; }
-    h1 { margin: 0 0 1.5rem; font-size: 1.3rem; color: #1a1a2e; }
-    input { width: 100%; padding: 0.6rem 0.75rem; margin-bottom: 1rem;
-            border: 1px solid #ddd; border-radius: 4px; font-size: 0.95rem; }
-    button { width: 100%; padding: 0.7rem; background: #1a1a2e; color: #fff;
-             border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; }
-    button:hover { background: #2d2d4e; }
-    .error { color: #dc2626; font-size: 0.85rem; margin-bottom: 1rem; }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+           background: #f1f5f9; display: flex; align-items: center;
+           justify-content: center; min-height: 100vh; margin: 0;
+           -webkit-font-smoothing: antialiased; }
+    .box { background: #fff; padding: 2rem 2.25rem; border-radius: 12px;
+           box-shadow: 0 4px 24px rgba(15,23,42,.1), 0 1px 4px rgba(15,23,42,.06);
+           width: 340px; max-width: calc(100vw - 2rem); }
+    .logo { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
+    .logo-icon { width: 32px; height: 32px; background: #1a1a2e; border-radius: 8px;
+                 display: flex; align-items: center; justify-content: center;
+                 font-size: 1rem; }
+    .logo h1 { margin: 0; font-size: 1.15rem; font-weight: 700; color: #0f172a; }
+    .field { margin-bottom: 0.85rem; }
+    .field label { display: block; font-size: 0.8rem; font-weight: 600;
+                   color: #64748b; margin-bottom: 0.3rem; }
+    .field input { width: 100%; padding: 0.55rem 0.75rem;
+                   border: 1px solid #e2e8f0; border-radius: 6px;
+                   font-size: 0.9rem; font-family: inherit; color: #0f172a;
+                   background: #f8fafc; transition: border-color .15s, box-shadow .15s; }
+    .field input:focus { outline: none; border-color: #a5b4fc;
+                         box-shadow: 0 0 0 3px rgba(79,70,229,.1);
+                         background: #fff; }
+    button[type="submit"] { width: 100%; padding: 0.65rem; background: #4f46e5;
+                            color: #fff; border: none; border-radius: 6px;
+                            font-size: 0.9rem; font-weight: 600; cursor: pointer;
+                            font-family: inherit; margin-top: 0.25rem;
+                            transition: filter .15s; }
+    button[type="submit"]:hover { filter: brightness(.88); }
+    .error { color: #dc2626; font-size: 0.82rem; margin-bottom: 0.75rem;
+             padding: 0.45rem 0.65rem; background: #fee2e2; border-radius: 5px; }
   </style>
 </head>
 <body>
   <div class="box">
-    <h1>Xingent</h1>
+    <div class="logo">
+      <div class="logo-icon">⭐</div>
+      <h1>Xingent</h1>
+    </div>
     {% if error %}<p class="error">{{ error }}</p>{% endif %}
     <form method="post">
-      <input type="text" name="username" placeholder="Username" autofocus>
-      <input type="password" name="password" placeholder="Password">
+      <div class="field">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" placeholder="your username" autofocus>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" placeholder="••••••••">
+      </div>
       <button type="submit">Sign in</button>
     </form>
   </div>

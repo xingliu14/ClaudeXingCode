@@ -409,8 +409,12 @@ def run_cc_docker(prompt: str, task_id: int, model: str = DEFAULT_MODEL) -> tupl
     # Mount the current task's artifact folder at /task_output/ (writable).
     task_folder = task_artifact_folder(task_id)
     task_folder.mkdir(parents=True, exist_ok=True)
-    # Ensure the artifact folder is writable by the agent user (uid=1000) inside Docker.
-    os.chown(task_folder, 1000, 1000)
+    # Best-effort: make folder writable by the agent user (uid=1000) inside Docker.
+    # Silently skipped on macOS/dev where non-root cannot chown to another uid.
+    try:
+        os.chown(task_folder, 1000, 1000)
+    except PermissionError:
+        pass
     docker_cmd += ["-v", f"{task_folder}:/task_output"]
 
     if oauth_token:
