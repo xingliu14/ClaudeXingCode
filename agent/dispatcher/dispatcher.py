@@ -500,6 +500,51 @@ def git_commit(message: str) -> bool:
     return True
 
 
+def push_workspace_repos() -> None:
+    """Push unpushed commits in all workspace repos (except ClaudeXingCode).
+
+    Execution Claude is supposed to push after committing, but it's unreliable.
+    This runs after every task execution as a safety net.
+    """
+    gh_token = os.environ.get("GH_TOKEN", "")
+    if not gh_token:
+        return
+
+    docker_mount = Path(DOCKER_MOUNT)
+    skip_name = Path(WORKSPACE_REL).name  # e.g. "ClaudeXingCode"
+
+    for repo_dir in sorted(docker_mount.iterdir()):
+        if not repo_dir.is_dir() or repo_dir.name == skip_name:
+            continue
+        if not (repo_dir / ".git").exists():
+            continue
+
+        # Check commits ahead of upstream; skip if none or no upstream set.
+        ahead = subprocess.run(
+            ["git", "rev-list", "--count", "@{u}..HEAD"],
+            cwd=repo_dir, capture_output=True, text=True,
+        )
+        if ahead.returncode != 0 or ahead.stdout.strip() == "0":
+            continue
+
+        remote_url = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=repo_dir, capture_output=True, text=True,
+        )
+        if remote_url.returncode != 0 or "github.com" not in remote_url.stdout:
+            continue
+
+        # Inject token into URL — stays in memory only for this subprocess.
+        url = remote_url.stdout.strip()
+        auth_url = url.replace("https://", f"https://x-access-token:{gh_token}@")
+        push = subprocess.run(
+            ["git", "push", auth_url, "HEAD"],
+            cwd=repo_dir, capture_output=True, text=True,
+        )
+        if push.returncode == 0:
+            print(f"[dispatcher] Pushed {repo_dir.name} to origin.", flush=True)
+        else:
+            print(f"[dispatcher] Push failed for {repo_dir.name}: {push.stderr.strip()[:200]}", flush=True)
 
 
 def task_artifact_folder(task_id: int) -> Path:
@@ -988,6 +1033,7 @@ def execute_task(task: dict) -> None:
     # Materialize document artifacts: write content to files, store path
     _materialize_document_artifacts(result, task_id)
     git_commit(f"agent: complete task #{task_id} — {task['prompt'][:60]}")
+    push_workspace_repos()
     update_task(task_id, status="done", completed_at=now, result=result,
                 progress_action="completed",
                 progress_details=summary or "")
