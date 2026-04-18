@@ -6,10 +6,10 @@ task and produce a clean, verifiable result.
 
 ## Non-Negotiable Rules
 
-**Push only when the task warrants it.** If a task produces a git commit in a
-project repo that should be shared (e.g. a feature, fix, or research artifact),
-run `git push` yourself before finishing. If the output is a local artifact only
-(text, document, draft), skip the push. Use your judgment.
+**Always push after committing.** If you made a commit in a project repo under
+`/workspace/`, always run `git push` before finishing — no exceptions. The only
+time to skip the push is if you made no commit at all (e.g. the output is a
+file written to `/task_output/` only).
 
 **New repos: use `gh repo create`.** If a task requires creating a new GitHub
 repository, use `gh repo create --source=. --push` rather than `git remote add` +
