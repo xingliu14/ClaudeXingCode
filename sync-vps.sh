@@ -145,9 +145,13 @@ fi
 ssh "$VPS_USER@$VPS_HOST" "chown -R 1000:1000 $VPS_WORKSPACE"
 
 echo "[sync] Restarting services..."
-ssh "$VPS_USER@$VPS_HOST" \
-    "sudo systemctl restart ralph-dispatcher ralph-web 2>/dev/null \
-     || sudo systemctl restart ralph-dispatcher@root ralph-web@root 2>/dev/null \
-     || echo '[sync] Warning: could not restart services — check systemctl status'"
+ssh "$VPS_USER@$VPS_HOST" "
+  # Kill any stale process holding the web port so the new service can bind.
+  fuser -k ${WEB_PORT:-5001}/tcp 2>/dev/null || true
+  sleep 1
+  sudo systemctl restart ralph-dispatcher ralph-web \
+    || sudo systemctl restart ralph-dispatcher@root ralph-web@root \
+    || { echo '[sync] Warning: could not restart services — check systemctl status'; exit 1; }
+"
 
 echo "[sync] Done."
