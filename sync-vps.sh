@@ -124,6 +124,12 @@ fi
 # Post-sync actions (skip for dry run)
 # ---------------------------------------------------------------------------
 
+# Sync agent/.env (excluded from rsync since it contains secrets).
+if [ -f "$SCRIPT_DIR/agent/.env" ]; then
+    echo "[sync] Syncing agent/.env..."
+    [ "$DRY_RUN" = false ] && scp "$SCRIPT_DIR/agent/.env" "$VPS_USER@$VPS_HOST:$VPS_DIR/agent/.env"
+fi
+
 # Update Claude Code on the VPS host (used for the plan phase).
 echo "[sync] Updating Claude Code on VPS host..."
 ssh "$VPS_USER@$VPS_HOST" "npm update -g @anthropic-ai/claude-code"
