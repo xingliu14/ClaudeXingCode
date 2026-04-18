@@ -345,9 +345,11 @@ BOARD_HTML = """
       .add-label span { display: none; }
       .add-controls .btn { margin-left: 0; }
       .toolbar, .section-label { padding-left: 0.75rem; padding-right: 0.75rem; }
-      .pipeline { padding: 0 0.75rem 1rem; gap: 8px; }
-      .col { min-width: 195px; flex: 0 0 195px; }
-      .offramp { padding: 0 0.75rem 1rem; }
+      .pipeline { flex-direction: column; overflow-x: visible;
+                  padding: 0 0.75rem 0.5rem; gap: 8px; }
+      .col { min-width: 0; flex: 0 0 auto; max-width: 100%; width: 100%; }
+      .offramp { flex-direction: column; padding: 0 0.75rem 1rem; }
+      .offramp .col { max-width: 100%; }
     }
   </style>
 </head>
