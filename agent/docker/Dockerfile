@@ -65,6 +65,7 @@ USER agent
 
 # Bake git config for the agent user — always use 'main' as the default branch.
 RUN git config --global init.defaultBranch main \
+    && git config --global push.autoSetupRemote true \
     && git config --global user.name "Ralph Agent" \
     && git config --global user.email "agent@ralph-loop"
 
