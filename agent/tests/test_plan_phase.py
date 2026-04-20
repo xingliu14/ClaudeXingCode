@@ -55,6 +55,29 @@ class TestParsePlanDecision:
         assert result["decision"] == "execute"
         assert result["plan"] == raw
 
+    def test_decompose_with_trailing_explanation(self):
+        """Decompose JSON followed by prose text should still parse as decompose.
+        Regression: trailing text caused json.loads to fail and fall back to execute."""
+        json_part = '{"decision": "decompose", "reasoning": "big task", "subtasks": [{"prompt": "step 1", "depends_on": []}]}'
+        raw = json_part + "\n\nNote: I chose decompose because the task has multiple concerns."
+        result = parse_plan_decision(raw)
+        assert result["decision"] == "decompose"
+        assert len(result["subtasks"]) == 1
+
+    def test_execute_with_trailing_explanation(self):
+        """Execute JSON followed by prose text should still parse as execute."""
+        json_part = '{"decision": "execute", "reasoning": "simple", "plan": "1. do it"}'
+        raw = json_part + "\n\nThis is straightforward enough to execute directly."
+        result = parse_plan_decision(raw)
+        assert result["decision"] == "execute"
+
+    def test_json_preceded_by_preamble(self):
+        """JSON embedded after leading prose should still be extracted."""
+        json_part = '{"decision": "decompose", "reasoning": "complex", "subtasks": [{"prompt": "sub", "depends_on": []}]}'
+        raw = "Here is my analysis:\n\n" + json_part
+        result = parse_plan_decision(raw)
+        assert result["decision"] == "decompose"
+
 
 class TestBuildPlanPrompt:
     """build_plan_prompt assembles the plan-phase prompt with decomposition rules,

@@ -266,14 +266,41 @@ def _strip_fences(text: str) -> str:
 
 def parse_plan_decision(raw: str) -> dict:
     """Parse CC's plan-phase output as a JSON decision dict.
-    Falls back to a synthetic 'execute' decision if JSON parsing fails."""
+
+    Tries three strategies in order:
+    1. Parse the full text as JSON (pure JSON output, most common).
+    2. raw_decode from the start (JSON followed by trailing explanation text).
+    3. Scan for the first '{' and try raw_decode from each position
+       (JSON embedded in the middle or end of text).
+
+    Falls back to a synthetic 'execute' decision only if all strategies fail.
+    This prevents the model's tendency to append explanation text from silently
+    converting a 'decompose' decision into a forced 'execute'."""
     text = _strip_fences(raw)
+
+    # Strategy 1: exact JSON
     try:
         obj = json.loads(text)
         if isinstance(obj, dict) and obj.get("decision") in ("execute", "decompose"):
             return obj
     except (json.JSONDecodeError, ValueError):
         pass
+
+    # Strategy 2 & 3: JSON embedded in text (trailing or leading prose)
+    decoder = json.JSONDecoder()
+    start = 0
+    while start < len(text):
+        idx = text.find("{", start)
+        if idx == -1:
+            break
+        try:
+            obj, _ = decoder.raw_decode(text, idx)
+            if isinstance(obj, dict) and obj.get("decision") in ("execute", "decompose"):
+                return obj
+        except (json.JSONDecodeError, ValueError):
+            pass
+        start = idx + 1
+
     return {"decision": "execute", "plan": raw}
 
 
