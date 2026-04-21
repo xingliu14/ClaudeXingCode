@@ -308,6 +308,12 @@ def parse_plan_decision(raw: str) -> dict:
             pass
         start = idx + 1
 
+    # Both strategies failed — log the raw output so future failures are diagnosable.
+    print(
+        f"[dispatcher] WARNING: parse_plan_decision fell back to execute. "
+        f"Raw output (first 500 chars): {raw[:500]!r}",
+        flush=True,
+    )
     return {"decision": "execute", "plan": raw}
 
 
