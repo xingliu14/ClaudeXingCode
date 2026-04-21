@@ -206,8 +206,11 @@ def build_plan_prompt(prompt: str, rejection_comments: list | None = None) -> st
     )
 
     json_spec = (
-        "=== OUTPUT FORMAT ===\n"
-        "Output ONLY valid JSON — no preamble, no markdown fences, no explanation outside the JSON.\n"
+        "=== OUTPUT FORMAT (STRICT) ===\n"
+        "Your ENTIRE response must be a single JSON object and nothing else.\n"
+        "- The very first character must be `{`\n"
+        "- The very last character must be `}`\n"
+        "- No preamble, no explanation, no markdown fences, no trailing text\n"
         "\n"
         "For execute:\n"
         '  {"decision": "execute", "reasoning": "why execute", "plan": "numbered step-by-step plan"}\n'
@@ -220,10 +223,12 @@ def build_plan_prompt(prompt: str, rejection_comments: list | None = None) -> st
         "\n"
         "depends_on contains 0-based indices into the subtasks array (not task IDs).\n"
         "Each subtask prompt must be fully self-contained — assume no shared context.\n"
-        "Each subtask title must be a concise human-readable label (≤60 chars) for display in the UI."
+        "Each subtask title must be a concise human-readable label (≤60 chars) for display in the UI.\n"
+        "\n"
+        "Do all your analysis and thinking silently. Output ONLY the JSON object."
     )
 
-    parts = [intro, decomposition_rules, json_spec]
+    parts = [intro, decomposition_rules]
 
     if rejection_comments:
         feedback_lines = [
@@ -234,7 +239,10 @@ def build_plan_prompt(prompt: str, rejection_comments: list | None = None) -> st
         if feedback_lines:
             parts.append("=== PRIOR FEEDBACK FROM REVIEWER ===\n" + "\n".join(feedback_lines))
 
+    # Task before json_spec so the format rule is the last thing CC reads —
+    # models follow the most recent instruction most reliably.
     parts.append(f"=== TASK ===\n{prompt}")
+    parts.append(json_spec)
     return "\n\n".join(parts)
 
 
@@ -378,7 +386,7 @@ def run_cc_local(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     model_id = MODEL_MAP.get(model, MODEL_MAP[DEFAULT_MODEL])
     cmd = [
         "claude", "-p", prompt,
-        "--output-format", "stream-json", "--verbose",
+        "--output-format", "stream-json",
         "--permission-mode", "plan",
         "--model", model_id,
     ]
