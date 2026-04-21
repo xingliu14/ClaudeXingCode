@@ -176,7 +176,7 @@ def parse_stream_json(raw: str) -> str:
     return raw  # fallback: return raw if nothing parsed
 
 
-def build_plan_prompt(prompt: str, rejection_comments: list | None = None) -> str:
+def build_plan_prompt(prompt: str, rejection_comments: list | None = None, title: str | None = None) -> str:
     """
     Build the plan-phase prompt, requiring CC to output a JSON decision.
     rejection_comments: list of {"round": N, "comment": "..."} from prior rejections.
@@ -241,12 +241,13 @@ def build_plan_prompt(prompt: str, rejection_comments: list | None = None) -> st
 
     # Task before json_spec so the format rule is the last thing CC reads —
     # models follow the most recent instruction most reliably.
-    parts.append(f"=== TASK ===\n{prompt}")
+    task_section = f"=== TASK ===\nTitle: {title}\n\n{prompt}" if title else f"=== TASK ===\n{prompt}"
+    parts.append(task_section)
     parts.append(json_spec)
     return "\n\n".join(parts)
 
 
-def build_task_prompt(prompt: str, plan_text: str | None = None, task_id: int | None = None) -> str:
+def build_task_prompt(prompt: str, plan_text: str | None = None, task_id: int | None = None, title: str | None = None) -> str:
     """Wrap the user prompt with isolation instructions. Injects approved plan if provided."""
     parts = [
         "You are working on a SINGLE, INDEPENDENT task. "
@@ -262,7 +263,8 @@ def build_task_prompt(prompt: str, plan_text: str | None = None, task_id: int | 
     ]
     if plan_text:
         parts.append(f"APPROVED PLAN:\n{plan_text}")
-    parts.append(f"TASK:\n{prompt}")
+    task_header = f"TASK TITLE: {title}\n\nTASK:\n{prompt}" if title else f"TASK:\n{prompt}"
+    parts.append(task_header)
     return "\n\n".join(parts)
 
 
@@ -882,7 +884,7 @@ def plan_task(task: dict) -> None:
     try:
         plan_model = task.get("plan_model") or task.get("model", DEFAULT_MODEL)
         rejection_comments = task.get("rejection_comments") or []
-        plan_prompt = build_plan_prompt(task["prompt"], rejection_comments)
+        plan_prompt = build_plan_prompt(task["prompt"], rejection_comments, title=task.get("title"))
         plan_rc, plan_output = run_cc_local(plan_prompt, model=plan_model)
     except subprocess.TimeoutExpired:
         update_task(task_id, status="stopped", stop_reason="timeout",
@@ -1016,7 +1018,7 @@ def execute_task(task: dict) -> None:
                     plan_text = plan_decision.get("plan")
         except (json.JSONDecodeError, TypeError):
             pass
-        exec_prompt = build_task_prompt(task["prompt"], plan_text=plan_text, task_id=task_id)
+        exec_prompt = build_task_prompt(task["prompt"], plan_text=plan_text, task_id=task_id, title=task.get("title"))
         exec_rc, exec_output = run_cc_docker(exec_prompt, task_id=task_id, model=exec_model)
     except subprocess.TimeoutExpired:
         update_task(task_id, status="stopped", stop_reason="timeout",
