@@ -386,7 +386,7 @@ def run_cc_local(prompt: str, model: str = DEFAULT_MODEL) -> tuple[int, str]:
     model_id = MODEL_MAP.get(model, MODEL_MAP[DEFAULT_MODEL])
     cmd = [
         "claude", "-p", prompt,
-        "--output-format", "stream-json",
+        "--output-format", "stream-json", "--verbose",
         "--permission-mode", "plan",
         "--model", model_id,
     ]
