@@ -78,6 +78,26 @@ class TestParsePlanDecision:
         result = parse_plan_decision(raw)
         assert result["decision"] == "decompose"
 
+    def test_decompose_with_nested_code_fences_in_subtask_prompts(self):
+        """Decompose JSON inside a ```json fence whose subtask prompts contain nested
+        ```js fences. The non-greedy fence regex truncates the JSON early; the fix
+        must scan raw directly so the JSON parser handles backticks as plain chars.
+        Regression: task #32 silently became execute because of this."""
+        inner_prompt = "Do this:\n\n```js\nconsole.log('hi');\n```\n\nThen verify."
+        decision = {
+            "decision": "decompose",
+            "reasoning": "parallel games",
+            "subtasks": [
+                {"title": "Game A", "prompt": inner_prompt, "depends_on": []},
+                {"title": "Register", "prompt": "Register games", "depends_on": [0]},
+            ],
+        }
+        json_str = json.dumps(decision)
+        raw = f"I'll decompose this task.\n\n```json\n{json_str}\n```"
+        result = parse_plan_decision(raw)
+        assert result["decision"] == "decompose"
+        assert len(result["subtasks"]) == 2
+
 
 class TestBuildPlanPrompt:
     """build_plan_prompt assembles the plan-phase prompt with decomposition rules,

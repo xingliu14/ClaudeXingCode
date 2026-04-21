@@ -267,34 +267,33 @@ def _strip_fences(text: str) -> str:
 def parse_plan_decision(raw: str) -> dict:
     """Parse CC's plan-phase output as a JSON decision dict.
 
-    Tries three strategies in order:
-    1. Parse the full text as JSON (pure JSON output, most common).
-    2. raw_decode from the start (JSON followed by trailing explanation text).
-    3. Scan for the first '{' and try raw_decode from each position
-       (JSON embedded in the middle or end of text).
+    Tries two strategies in order:
+    1. Strip code fences then json.loads (pure JSON or simply-fenced output).
+    2. Scan raw for the first '{' and try raw_decode from each position.
 
-    Falls back to a synthetic 'execute' decision only if all strategies fail.
-    This prevents the model's tendency to append explanation text from silently
-    converting a 'decompose' decision into a forced 'execute'."""
-    text = _strip_fences(raw)
+    Strategy 2 operates on `raw` (not the fence-stripped text) so that nested
+    code-fence syntax inside JSON string values (e.g. ```js blocks in subtask
+    prompts) doesn't confuse the regex and truncate the JSON prematurely.
 
-    # Strategy 1: exact JSON
+    Falls back to a synthetic 'execute' decision only if both strategies fail."""
+    # Strategy 1: fence-strip then exact parse
     try:
-        obj = json.loads(text)
+        obj = json.loads(_strip_fences(raw))
         if isinstance(obj, dict) and obj.get("decision") in ("execute", "decompose"):
             return obj
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # Strategy 2 & 3: JSON embedded in text (trailing or leading prose)
+    # Strategy 2: scan raw directly — handles prose preamble/suffix AND nested
+    # code fences inside string values that break the fence-stripping regex.
     decoder = json.JSONDecoder()
     start = 0
-    while start < len(text):
-        idx = text.find("{", start)
+    while start < len(raw):
+        idx = raw.find("{", start)
         if idx == -1:
             break
         try:
-            obj, _ = decoder.raw_decode(text, idx)
+            obj, _ = decoder.raw_decode(raw, idx)
             if isinstance(obj, dict) and obj.get("decision") in ("execute", "decompose"):
                 return obj
         except (json.JSONDecodeError, ValueError):
